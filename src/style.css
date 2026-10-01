@@ -1069,3 +1069,61 @@ body:has(#hud[data-layout='mobile']) #menu-btn {
   letter-spacing: 0.15em;
   text-shadow: 0 2px 0 #000;
 }
+
+/* ───────── M7：連線大廳、等待提示 ───────── */
+.menu-card.lobby {
+  width: min(560px, 100%);
+}
+.lobby label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.lobby input,
+.lobby select {
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--gold);
+  background: #1d140d;
+  color: var(--paper);
+  min-width: 0;
+  flex: 0 1 60%;
+}
+.lobby .code {
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.25em;
+  color: #ffe9b0;
+}
+.lobby .sub {
+  font-size: 13px;
+  opacity: 0.8;
+}
+.lobby .members td {
+  padding: 2px 6px;
+}
+.net-wait {
+  position: fixed;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: 2px solid var(--gold);
+  background: rgba(20, 14, 9, 0.92);
+  color: var(--paper);
+  font-size: 18px;
+  text-align: center;
+  z-index: 70;
+}
+.net-wait .menu-btn {
+  display: block;
+  margin: 10px auto 0;
+}
+.net-wait .sub {
+  font-size: 13px;
+  opacity: 0.8;
+  margin-top: 6px;
+}

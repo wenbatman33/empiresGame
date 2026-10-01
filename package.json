@@ -1,7 +1,7 @@
 {
   "name": "empires-game",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "lint:sim": "node scripts/check-sim.mjs",
     "test": "vitest run",
-    "ai-arena": "vitest run --config scripts/vitest.arena.config.ts --silent=false"
+    "ai-arena": "vitest run --config scripts/vitest.arena.config.ts --silent=false",
+    "relay": "node server/relay.mjs",
+    "package": "node scripts/package-web.mjs"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
@@ -19,8 +21,10 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/three": "^0.186.0",
+    "@types/ws": "^8.18.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.1",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "ws": "^8.22.0"
   }
 }

@@ -11,6 +11,9 @@ import { BuildingRenderer } from './render/buildings';
 import { Effects } from './render/effects';
 import { Particles } from './render/particles';
 import { Advisor } from './ui/advisor';
+import { Lockstep } from './net/lockstep';
+import type { Room, StartInfo } from './net/session';
+import type { CommandInput } from './sim/core/commands';
 import { SCENARIO_BY_ID } from './data/campaigns';
 import { DialogBox, ObjectivePanel, saveStars, showBriefing, SCENARIOS } from './ui/story';
 import { SKILLS, STRATAGEMS } from './sim/systems/abilities';
@@ -30,10 +33,19 @@ import { Sim } from './sim/sim';
 import { Hud } from './ui/hud';
 import { detectLayout, type LayoutMode } from './ui/layout';
 
+/** 連線對戰（docs/08 §3）：房間、開戰資訊、我的欄位 */
+export interface NetGame {
+  room: Room;
+  info: StartInfo;
+  slot: number;
+  observer: boolean;
+}
+
 export interface GameOptions {
   setup: GameSetup;
   quality: Quality;
   layout?: LayoutMode;
+  net?: NetGame;
 }
 
 export interface Placing {
@@ -65,7 +77,15 @@ export class Game {
   readonly cam: RtsCamera;
   readonly hud: Hud;
   readonly controls: Controls;
-  readonly myPlayer = 0;
+  /** 我控制的玩家欄位（連線對戰時由房間分配；觀戰者看 0 號但不能下指令） */
+  readonly myPlayer: number;
+  /** 連線對戰 */
+  readonly net: NetGame | null;
+  private lockstep: Lockstep | null = null;
+  /** 原本的 sim.issue（指令直接進模擬，不經網路） */
+  private rawIssue!: Sim['issue'];
+  private waitTime = 0;
+  private waitEl: HTMLElement | null = null;
   /** 選取：單位（可多選）、或一棟建築、或一個資源點 */
   readonly selected = new Set<number>();
   selBuilding = -1;
@@ -115,17 +135,23 @@ export class Game {
     this.setup = opts.setup;
     const st = opts.setup;
     const fac = (f?: string) => (f && f !== 'random' ? f : '');
+    this.net = opts.net ?? null;
+    this.myPlayer = this.net ? Math.max(0, this.net.slot) : 0;
     const scenario = st.campaign ? SCENARIO_BY_ID.get(st.campaign) : undefined;
+    // 連線對戰：每個欄位的勢力來自房間成員或 AI 補位
+    const netFactions = this.net ? [0, 1].map((slot) => fac(this.net!.info.members.find((m) => m.slot === slot)?.faction) || (slot === 1 ? fac(st.aiFaction) : '')) : null;
+    const netHandicap = this.net ? [0, 1].map((slot) => AI_PARAMS[(this.net!.info.ais.find((a) => a.slot === slot)?.ai as keyof typeof AI_PARAMS) ?? 'normal']?.handicap ?? 1000) : null;
     this.sim = scenario ? new Sim({ seed: 1, scenario, popLimit: st.pop }) : new Sim({
       seed: st.seed,
       mapSize: st.map,
       mapType: st.mapType ?? 'central',
-      factions: [fac(st.faction), fac(st.aiFaction)],
+      factions: netFactions ?? [fac(st.faction), fac(st.aiFaction)],
       seal: st.seal !== false,
       bonusRes: st.res,
       popLimit: st.pop,
-      handicap: [1000, AI_PARAMS[st.ai].handicap],
+      handicap: netHandicap ?? [1000, AI_PARAMS[st.ai].handicap],
     });
+    this.rawIssue = this.sim.issue.bind(this.sim);
     this.speed = st.speed;
     this.stage = new Stage(container, opts.quality);
     this.terrain = new Terrain(this.sim.map);
@@ -152,10 +178,13 @@ export class Game {
       });
       this.dialog = new DialogBox(container);
       this.objectives = new ObjectivePanel(container, scenario);
+    } else if (this.net) {
+      // 連線對戰：只有房主設定的 AI 補位欄位跑 AI（每台機器都跑，確定性）
+      for (const a of this.net.info.ais) this.ais.push(new AIPlayer(this.sim, a.slot, a.ai as keyof typeof AI_PARAMS));
     } else {
       this.ais.push(new AIPlayer(this.sim, 1, st.ai));
     }
-    this.fog.enabled = !st.reveal;
+    this.fog.enabled = !st.reveal && !this.net?.observer;
     this.goHome();
     this.addMenuButton(container);
     window.addEventListener('resize', () => {
@@ -193,9 +222,20 @@ export class Game {
       showBriefing(document.body, sc, () => (this.paused = false));
     }
     sfx.preloadVoices(['sel_soldier_1', 'cmd_soldier_1', 'atk_soldier_1', 'sel_villager_1', 'cmd_villager_1']);
-    // 玩家下的指令：播語音回應（AI、重播不播）
-    const issue = this.sim.issue.bind(this.sim);
+    if (this.net) this.startNet();
+    // 玩家下的指令：播語音回應（AI、重播不播）；連線對戰時自己的指令改走網路
+    const issue = this.rawIssue;
     this.sim.issue = (input, delay) => {
+      const mine = 'player' in input && input.player === this.myPlayer;
+      if (this.net && mine) {
+        if (this.net.observer) return { ...input, tick: -1 } as never;
+        this.lockstep!.issueLocal(input as CommandInput);
+        if (!this.replaying && 'ids' in input && Math.random() < 0.7) {
+          const kind = input.t === 'attack' || input.t === 'attackMove' ? 'atk' : 'cmd';
+          this.voiceFor(input.ids, kind);
+        }
+        return { ...input, tick: -1 } as never;
+      }
       const c = issue(input, delay);
       if (!this.replaying && 'player' in c && c.player === this.myPlayer && 'ids' in c && Math.random() < 0.7) {
         const kind = c.t === 'attack' || c.t === 'attackMove' ? 'atk' : c.t === 'move' || c.t === 'patrol' || c.t === 'gather' || c.t === 'work' || c.t === 'build' || c.t === 'buildLine' ? 'cmd' : null;
@@ -249,9 +289,18 @@ export class Game {
     const t0 = performance.now();
     let simMs = 0;
     let ticks = 0;
-    if (!this.paused) {
+    // 讀檔／重連快轉中：模擬由 replay() 推進，畫面這邊不能再額外前進
+    if (!this.paused && !this.replaying) {
       this.acc += dt * 1000 * this.speed;
       while (this.acc >= TICK_MS && ticks < 16) {
+        // 連線對戰：回合開頭要等齊所有人的指令
+        if (this.lockstep && !this.replaying) {
+          if (!this.lockstep.canStep(this.sim.tick)) {
+            this.acc = Math.min(this.acc, TICK_MS * 4);
+            break;
+          }
+          this.lockstep.beforeStep(this.sim.tick);
+        }
         const s0 = performance.now();
         if (!this.replaying) for (const a of this.ais) a.tick();
         this.sim.step();
@@ -266,7 +315,8 @@ export class Game {
       this.time += dt * this.speed;
     }
     this.processEvents();
-    if (!this.replaying && !this.over && this.sim.tick - this.lastAutosave >= 600) {
+    this.netStatus(dt);
+    if (!this.replaying && !this.over && !this.net && this.sim.tick - this.lastAutosave >= 600) {
       this.lastAutosave = this.sim.tick;
       writeSave(AUTO_KEY, this.saveData());
     }
@@ -464,6 +514,78 @@ export class Game {
     }
   }
 
+  // ───────── 連線對戰 ─────────
+
+  /**
+   * 分頁在背景時瀏覽器會暫停 requestAnimationFrame：連線對戰的模擬改用計時器推進（不畫畫面），
+   * 免得其他玩家一直等你
+   */
+  private bgLast = 0;
+  private backgroundStep(): void {
+    if (!document.hidden || this.replaying || this.over) {
+      this.bgLast = performance.now();
+      return;
+    }
+    const now = performance.now();
+    let budget = Math.min(30, Math.floor((now - this.bgLast) / TICK_MS));
+    this.bgLast += budget * TICK_MS;
+    const ls = this.lockstep!;
+    while (budget-- > 0) {
+      if (!ls.canStep(this.sim.tick)) break;
+      ls.beforeStep(this.sim.tick);
+      for (const a of this.ais) a.tick();
+      this.sim.step();
+    }
+    this.processEvents();
+  }
+
+  private startNet(): void {
+    const net = this.net!;
+    this.bgLast = performance.now();
+    window.setInterval(() => this.backgroundStep(), 250);
+    const humans = net.info.members.filter((m) => m.role === 'player' && m.slot >= 0).map((m) => m.slot);
+    const ls = new Lockstep(this.sim, net.room.transport, net.observer ? -1 : net.slot, humans, net.info.delay, net.room.id, (c) => this.rawIssue(c, 0));
+    this.lockstep = ls;
+    ls.onDesync = (turn) => this.hud.toast(`⚠ 與其他玩家不同步（第 ${turn} 回合），請回報這局的重播`, 8000);
+    ls.onTakeover = (p) => {
+      this.ais.push(new AIPlayer(this.sim, p, 'normal'));
+      this.hud.toast(`玩家 ${p + 1} 斷線，改由電腦接手`, 4000);
+    };
+    net.room.onGameMsg = (m) => ls.receive(m);
+    net.room.getSync = () => ({ tick: this.sim.tick, history: this.sim.history, turns: ls.pendingTurns() });
+    const sync = net.info.sync;
+    if (sync) {
+      // 斷線重連／中途觀戰：先快轉，再接著收送回合
+      void this.replay(sync.history, sync.tick, true).then(() => ls.resume(this.sim.tick, sync.turns));
+    }
+  }
+
+  /** 等待其他玩家：顯示提示；房主等太久可以讓電腦接手 */
+  private netStatus(dt: number): void {
+    const ls = this.lockstep;
+    if (!ls || this.over) return;
+    const waiting = ls.waitingFor.length > 0 && !this.replaying;
+    this.waitTime = waiting ? this.waitTime + dt : 0;
+    if (this.waitTime < 1.5) {
+      if (this.waitEl) this.waitEl.hidden = true;
+      return;
+    }
+    if (!this.waitEl) {
+      this.waitEl = document.createElement('div');
+      this.waitEl.className = 'net-wait';
+      document.body.appendChild(this.waitEl);
+      this.waitEl.addEventListener('click', (e) => {
+        if (!(e.target as HTMLElement).closest('[data-act=ai]')) return;
+        for (const p of ls.waitingFor) ls.announceTakeover(p, this.sim.tick);
+      });
+    }
+    const names = ls.waitingFor.map((p) => this.net!.info.members.find((m) => m.slot === p)?.name ?? `玩家 ${p + 1}`).join('、');
+    const host = this.net!.room.isHost;
+    const canTake = host && this.waitTime > 15;
+    this.waitEl.hidden = false;
+    this.waitEl.innerHTML = `⏳ 等待 ${names}…（${Math.floor(this.waitTime)} 秒）${canTake ? '<button class="menu-btn" data-act="ai">改由電腦接手</button>' : host ? '' : '<div class="sub">對方可以重新整理頁面後按「重新連線」回來</div>'}`;
+  }
+
   /** 戰役事件：對話（暫停遊戲）、目標、鏡頭、提示、武將特寫 */
   private storyEvent(e: (typeof this.sim.events)[number]): void {
     const sc = this.sim.scenario;
@@ -610,7 +732,8 @@ export class Game {
       this.closeMenu();
       return;
     }
-    this.paused = true;
+    // 連線對戰不能暫停（其他人會一起卡住）
+    if (!this.net) this.paused = true;
     sfx.play('click');
     this.menuClose = showPauseMenu(document.body, {
       resume: () => this.closeMenu(),
@@ -666,13 +789,23 @@ export class Game {
   }
 
   /** 讀檔：把指令紀錄重播到存檔時的 tick（分批跑，不卡畫面） */
-  async replay(history: Command[], tick: number): Promise<void> {
+  async replay(history: Command[], tick: number, tickAis = false): Promise<void> {
     this.replaying = true;
-    for (const c of history) this.sim.issue(structuredClone(c), c.tick - this.sim.tick);
+    for (const c of history) this.rawIssue(structuredClone(c), c.tick - this.sim.tick);
     const ld = showLoading(document.body, '讀取戰局中…');
+    // AI 也要跟著跑，內部狀態才會和其他玩家一致（指令丟掉，紀錄裡已經有）
+    const mute = (() => ({ tick: -1 })) as unknown as Sim['issue'];
     while (this.sim.tick < tick) {
       const end = Math.min(tick, this.sim.tick + 400);
-      while (this.sim.tick < end) this.sim.step();
+      while (this.sim.tick < end) {
+        if (tickAis) {
+          const keep = this.sim.issue;
+          this.sim.issue = mute;
+          for (const a of this.ais) a.tick();
+          this.sim.issue = keep;
+        }
+        this.sim.step();
+      }
       ld.set(`讀取戰局中… ${Math.floor((this.sim.tick / Math.max(1, tick)) * 100)}%`);
       await new Promise((r) => setTimeout(r, 0));
     }
@@ -694,7 +827,7 @@ export class Game {
     if (!preview) this.over = true;
     sfx.play(win ? 'win' : 'lose');
     const me = this.sim.players[this.myPlayer];
-    const en = this.sim.players[1];
+    const en = this.sim.players[this.myPlayer === 0 ? 1 : 0];
     const ages = ['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'];
     const sec = Math.floor(this.sim.tick / 10);
     const rows: [string, string, string][] = [

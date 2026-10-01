@@ -74,7 +74,7 @@ function el(html: string): HTMLElement {
 }
 
 /** 主選單 */
-export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStart: (s: GameSetup) => void; onLoad: () => void; onSettings?: () => void; onCampaign?: () => void }): void {
+export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStart: (s: GameSetup) => void; onLoad: () => void; onSettings?: () => void; onCampaign?: () => void; onNet?: () => void }): void {
   const s: GameSetup = { ...DEFAULT_SETUP, seed: (Math.random() * 1e9) | 0 };
   const m = el(`
     <div class="menu-screen main-menu">
@@ -84,6 +84,7 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
         <div class="menu-main">
           <button class="menu-btn primary" data-act="campaign">📜 戰役</button>
           <button class="menu-btn primary" data-act="setup">⚔ 自由對戰</button>
+          <button class="menu-btn primary" data-act="net">🌐 連線對戰</button>
           ${opts.hasSave ? '<button class="menu-btn" data-act="load">📜 繼續上次</button>' : ''}
           <button class="menu-btn" data-act="help">❓ 操作說明</button>
           <button class="menu-btn" data-act="settings">⚙ 設定</button>
@@ -129,6 +130,11 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
     if (act === 'campaign') {
       main.hidden = false;
       opts.onCampaign?.();
+    }
+    if (act === 'net') {
+      main.hidden = false;
+      m.remove();
+      opts.onNet?.();
     }
     if (act === 'settings') {
       main.hidden = false;

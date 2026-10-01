@@ -16,7 +16,7 @@
 - [x] M4 三國特色：魏蜀吳勢力被動與特殊兵種、13 名武將（主動技 ＋ 橫幅演出 ＋ 被動）、謀士勸降治療、兵書與玉璽稱帝、7 種計策、關隘、書院、市集、城門、奇觀、水軍 6 種船、長江／蜀道／赤壁地圖、瘋狂 AI、民夫分配助手
 - [x] M5 美術與音效打磨：AI 生成 Logo／選單／載入畫面／武將頭像／徽章／計策圖示、3D 算圖圖示、粒子特效與受擊白閃、程式合成古風配樂、台灣中文語音、設定頁、軍師提示、PWA、三勢力奇觀
 - [x] M6 戰役：劇本與觸發器系統、對話與目標面板、星等與解鎖、四章 15 關（黃巾之亂教學章、官渡之戰、赤壁之戰、夷陵之戰）、DEV 劇本編輯
-- [ ] M7 多人連線與上架
+- [x] M7 多人連線與上架：確定性 lockstep、同機分頁／中繼伺服器連線、大廳與房間碼、不同步偵測、斷線等待與電腦接手、斷線重連、觀戰、itch.io 打包（實際推版與上架待確認）
 
 ## 開發
 
@@ -31,6 +31,8 @@ GAMES=20 FAC=wei-shu,wei-wu,shu-wu npm run ai-arena    # 勢力平衡（普通�
 node scripts/gen_via_codex.mjs     # AI 生圖（codex image_gen，已存在的跳過）
 node scripts/optimize_assets.mjs   # 素材瘦身（原圖備份到 art/originals/）
 bash scripts/gen_voice.sh          # 產生語音（macOS say）
+npm run relay                      # 連線對戰的中繼伺服器（ws://localhost:8787）
+npm run package                    # 打包成 release/empiresGame-web-<版本>.zip（itch.io）
 ```
 
 ## 技術

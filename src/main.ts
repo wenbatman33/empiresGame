@@ -5,6 +5,8 @@ import { sfx } from './audio/sfx';
 import type { Quality } from './config';
 import { readSetup, setupQuery, showMainMenu, showSettings, type GameSetup } from './ui/menus';
 import { showCampaignMenu } from './ui/story';
+import { saveRejoin, showLobby } from './ui/lobby';
+import type { Room, StartInfo } from './net/session';
 import './style.css';
 
 // DEV 工具只在開發模式或網址加 ?dev=1 時載入（一般玩家不會下載）
@@ -60,6 +62,25 @@ function savedQuality(): Quality | null {
   }
 }
 
+/** 連線對戰：在同一個頁面裡開戰（不能換頁，連線會斷） */
+async function startNet(room: Room, info: StartInfo): Promise<void> {
+  const app = document.getElementById('app')!;
+  const me = info.members.find((m) => m.id === room.id);
+  const observer = !me || me.role !== 'player' || me.slot < 0;
+  const opts = { setup: info.setup, quality: savedQuality() ?? autoQuality(), net: { room, info, slot: me?.slot ?? -1, observer } };
+  let game: Game;
+  if (devEnabled) {
+    const { DevTools } = await import('./dev/devtools');
+    const persisted = DevTools.applyPersisted();
+    game = new Game(app, { ...opts, quality: persisted.quality ?? opts.quality });
+    new DevTools(game, persisted);
+  } else {
+    game = new Game(app, opts);
+  }
+  (window as unknown as { game: Game }).game = game;
+  game.start();
+}
+
 function hideLoading(): void {
   const ld = document.getElementById('loading');
   ld?.classList.add('done');
@@ -75,6 +96,19 @@ function boot(): void {
   sfx.setMusic('peace');
   showMainMenu(document.body, {
     hasSave: !!latestSave(),
+    onNet: () => {
+      const back = () => {
+        location.href = `${location.pathname}${devEnabled && params.has('dev') ? '?dev=1' : ''}`;
+      };
+      showLobby(
+        document.body,
+        (room, info, rj) => {
+          saveRejoin(rj);
+          startNet(room, info).catch(fail);
+        },
+        back,
+      );
+    },
     onCampaign: () =>
       showCampaignMenu(
         document.body,
