@@ -5,6 +5,8 @@ import { CAMERA, type Quality } from './config';
 import { Controls } from './input/controls';
 import { RtsCamera } from './input/camera';
 import { BuildingRenderer } from './render/buildings';
+import { FogRenderer } from './render/fog';
+import { ProjectileRenderer } from './render/projectiles';
 import { Markers } from './render/markers';
 import { ResourceRenderer } from './render/resources';
 import { Stage } from './render/stage';
@@ -13,7 +15,7 @@ import { Trees } from './render/trees';
 import { UnitRenderer } from './render/units';
 import { BUILDING_DEFS, RESOURCE_KINDS, RK, UNIT_DEFS, UNIT_INDEX } from './sim/core/defs';
 import { ONE, TICK_MS } from './sim/core/fixed';
-import { S } from './sim/core/world';
+import { S, TK } from './sim/core/world';
 import { Sim } from './sim/sim';
 import { Hud } from './ui/hud';
 import { detectLayout, type LayoutMode } from './ui/layout';
@@ -29,6 +31,8 @@ export interface Placing {
   tx: number;
   ty: number;
   valid: boolean;
+  /** 牆：第一下點的起點 */
+  lineStart?: [number, number];
 }
 
 export class Game {
@@ -40,6 +44,8 @@ export class Game {
   readonly buildingsR: BuildingRenderer;
   readonly resourcesR: ResourceRenderer;
   readonly markers: Markers;
+  readonly fog: FogRenderer;
+  readonly projectilesR: ProjectileRenderer;
   readonly cam: RtsCamera;
   readonly hud: Hud;
   readonly controls: Controls;
@@ -50,6 +56,12 @@ export class Game {
   selResource = -1;
   placing: Placing | null = null;
   rallyMode = false;
+  /** 攻擊移動模式：下一次點地面是攻擊移動 */
+  attackMoveMode = false;
+  /** 巡邏模式：下一次點地面是巡邏終點 */
+  patrolMode = false;
+  /** 陣型：散開 */
+  spread = false;
   layoutMode: LayoutMode;
   /** DEV 手動指定版面後，不再隨視窗自動切換 */
   layoutLocked = false;
@@ -68,6 +80,7 @@ export class Game {
   private groups = new Map<number, number[]>();
   private idleCursor = 0;
   private wasHoused = false;
+  private lastAlert = -1e9;
   private statAcc = { frames: 0, time: 0, simMs: 0, frameMs: 0, ticks: 0 };
   private readonly v = new THREE.Vector3();
   private readonly ray = new THREE.Raycaster();
@@ -82,7 +95,9 @@ export class Game {
     this.buildingsR = new BuildingRenderer(this.terrain);
     this.resourcesR = new ResourceRenderer(this.sim, this.terrain);
     this.markers = new Markers();
-    this.stage.scene.add(this.terrain.group, this.trees.group, this.resourcesR.group, this.buildingsR.group, this.units.group, this.markers.group);
+    this.fog = new FogRenderer(this.sim.map.w, this.sim.map.h);
+    this.projectilesR = new ProjectileRenderer(this.terrain);
+    this.stage.scene.add(this.terrain.group, this.trees.group, this.resourcesR.group, this.buildingsR.group, this.units.group, this.markers.group, this.projectilesR.mesh);
     this.applyShadowMode();
     const startDist = this.layoutMode === 'mobile' ? CAMERA.startDistMobile : CAMERA.startDistPc;
     this.cam = new RtsCamera(this.stage.camera, this.terrain, this.sim.map.w, this.sim.map.h, startDist);
@@ -164,16 +179,32 @@ export class Game {
     this.controls.update();
     this.cam.update(dt);
     this.stage.followTarget(this.cam.target, this.cam.dist);
-    this.units.update(this.sim, alpha, this.time, dt * this.speed, this.viewBounds());
+    this.fog.update(this.sim.vision, this.myPlayer);
+    const vis = this.isVisible;
+    const exp = this.isExplored;
+    this.units.update(this.sim, alpha, this.time, dt * this.speed, this.viewBounds(), this.myPlayer, vis);
     const w = this.sim.world;
-    for (const id of this.selected) if (!w.alive[id] || w.state[id] === S.Dead) this.selected.delete(id);
+    for (const id of this.selected) if (!w.alive[id] || w.state[id] === S.Dead || !this.units.seen[id]) this.selected.delete(id);
     if (this.selBuilding >= 0 && !this.sim.buildings.alive[this.selBuilding]) this.selBuilding = -1;
     if (this.selResource >= 0 && !this.sim.res.alive[this.selResource]) this.selResource = -1;
-    this.markers.update(this.units, this.selected, w, this.myPlayer, dt);
-    this.buildingsR.update(this.sim, this.selBuilding);
+    this.markers.update(this.units, this.selected, w, this.myPlayer, dt, {
+      sim: this.sim,
+      camera: this.stage.camera,
+      selBuilding: this.selBuilding,
+      buildingHeight: (bt) => this.buildingsR.heightOf(bt),
+      explored: exp,
+    });
+    this.buildingsR.update(this.sim, this.selBuilding, this.myPlayer, exp);
+    this.projectilesR.update(this.sim, alpha, vis);
     this.resourcesR.update(dt);
-    if (this.placing) this.buildingsR.setGhost(this.placing.btype, this.placing.tx, this.placing.ty, this.placing.valid);
-    else this.buildingsR.setGhost(-1, 0, 0, false);
+    if (this.placing) {
+      const pl = this.placing;
+      this.buildingsR.setGhost(pl.btype, pl.tx, pl.ty, pl.valid);
+      this.buildingsR.setLineGhost(pl.lineStart ? this.lineTiles(pl.lineStart[0], pl.lineStart[1], pl.tx, pl.ty).map(([x, y]) => [x, y, this.sim.canPlace(pl.btype, x, y)]) : []);
+    } else {
+      this.buildingsR.setGhost(-1, 0, 0, false);
+      this.buildingsR.setLineGhost([]);
+    }
     this.hud.update(dt);
     this.stage.render();
     for (const f of this.onFrame) f(dt);
@@ -193,10 +224,19 @@ export class Game {
     }
   }
 
+  /** 迷霧：該格現在看得到嗎（箭頭函式，方便直接傳給渲染層） */
+  readonly isVisible = (tx: number, ty: number): boolean => this.fog.visible(this.sim.vision, this.myPlayer, tx, ty);
+  readonly isExplored = (tx: number, ty: number): boolean => this.fog.explored(this.sim.vision, this.myPlayer, tx, ty);
+
   /** 模擬層事件 → 畫面更新、提示 */
   private processEvents(): void {
     const ev = this.sim.events;
     for (const e of ev) {
+      if (e.t === 'died' && e.player === this.myPlayer) this.alert(this.sim.world.x[e.id] / ONE, this.sim.world.y[e.id] / ONE);
+      if (e.t === 'bDestroyed') {
+        if (this.selBuilding === e.id) this.selBuilding = -1;
+        this.resourcesR.dirty();
+      }
       if (e.t === 'resGone') {
         if (e.kind === RK.tree) {
           this.trees.remove(e.tx, e.ty);
@@ -211,6 +251,21 @@ export class Game {
     const housed = this.sim.players[this.myPlayer].housed;
     if (housed && !this.wasHoused) this.hud.toast('人口已滿：請蓋民居', 2500);
     this.wasHoused = housed;
+  }
+
+  /** 我方遭到攻擊：提示 ＋ 小地圖閃紅點（10 秒內只提示一次） */
+  alert(x: number, z: number): void {
+    this.hud.ping(x, z);
+    if (this.time - this.lastAlert < 10) return;
+    this.lastAlert = this.time;
+    this.hud.toast('⚠ 我軍遭到攻擊！（空白鍵跳過去）', 2500);
+    this.lastAlertPos = [x, z];
+  }
+
+  lastAlertPos: [number, number] | null = null;
+
+  jumpToAlert(): void {
+    if (this.lastAlertPos) this.cam.lookAt(this.lastAlertPos[0], this.lastAlertPos[1]);
   }
 
   // ───────── 點選 ─────────
@@ -230,7 +285,7 @@ export class Game {
     let best = -1;
     let bestD = r * r;
     for (let id = 0; id < w.high; id++) {
-      if (!w.alive[id] || w.state[id] === S.Dead) continue;
+      if (!w.alive[id] || w.state[id] === S.Dead || !this.units.seen[id]) continue;
       const p = this.screenPos(id, rect);
       if (!p) continue;
       const d = (p[0] - sx) ** 2 + (p[1] - sy) ** 2;
@@ -268,11 +323,13 @@ export class Game {
       const ty = Math.floor(p.z);
       if (!sim.map.inBounds(tx, ty)) continue;
       const b = sim.bldTile[sim.map.idx(tx, ty)];
-      if (b >= 0 && this.buildingsR.heightOf(sim.buildings.btype[b]) >= h) return b;
+      if (b >= 0 && this.buildingsR.heightOf(sim.buildings.btype[b]) >= h && (sim.buildings.owner[b] === this.myPlayer || this.isExplored(tx, ty))) return b;
     }
     const tx = Math.floor(g.x);
     const ty = Math.floor(g.z);
-    return sim.map.inBounds(tx, ty) ? sim.bldTile[sim.map.idx(tx, ty)] : -1;
+    if (!sim.map.inBounds(tx, ty)) return -1;
+    const b = sim.bldTile[sim.map.idx(tx, ty)];
+    return b >= 0 && (sim.buildings.owner[b] === this.myPlayer || this.isExplored(tx, ty)) ? b : -1;
   }
 
   /** 點到哪個資源點（樹、礦、野果用格子；動物用螢幕距離） */
@@ -315,6 +372,8 @@ export class Game {
     this.selBuilding = -1;
     this.selResource = -1;
     this.rallyMode = false;
+    this.attackMoveMode = false;
+    this.patrolMode = false;
     this.hud.card.reset();
   }
 
@@ -360,7 +419,16 @@ export class Game {
       this.setRallyAt(sx, sy);
       return;
     }
+    if (this.attackMoveMode || this.patrolMode) {
+      this.commandAt(sx, sy, false);
+      return;
+    }
     const id = this.pickUnit(sx, sy, 26);
+    // 有選我軍時點到敵人 → 攻擊
+    if (id >= 0 && this.sim.world.owner[id] !== this.myPlayer && this.ownSelected().length) {
+      this.commandAt(sx, sy, false);
+      return;
+    }
     if (id >= 0) {
       this.clearAll();
       this.selected.add(id);
@@ -514,8 +582,32 @@ export class Game {
     if (!ids.length) return;
     const p = this.cam.groundAt(sx, sy);
     if (!p) return;
-    const b = this.pickBuilding(sx, sy);
     const sim = this.sim;
+    if (this.attackMoveMode) {
+      this.attackMoveMode = false;
+      sim.issue({ t: 'attackMove', player: this.myPlayer, ids, x: Math.round(p.x * ONE), y: Math.round(p.z * ONE), spread: this.spread });
+      this.markers.ping(p.x, p.y, p.z, 0xff5a4a);
+      return;
+    }
+    if (this.patrolMode) {
+      this.patrolMode = false;
+      sim.issue({ t: 'patrol', player: this.myPlayer, ids, x: Math.round(p.x * ONE), y: Math.round(p.z * ONE) });
+      this.markers.ping(p.x, p.y, p.z, 0x5ab4ff);
+      return;
+    }
+    // 敵方單位 → 攻擊
+    const u = this.pickUnit(sx, sy, 22);
+    if (u >= 0 && sim.world.owner[u] !== this.myPlayer) {
+      sim.issue({ t: 'attack', player: this.myPlayer, ids, kind: TK.Unit, target: u });
+      this.markers.ping(this.units.wx[u], this.units.wy[u], this.units.wz[u], 0xff5a4a);
+      return;
+    }
+    const b = this.pickBuilding(sx, sy);
+    if (b >= 0 && sim.buildings.owner[b] !== this.myPlayer) {
+      sim.issue({ t: 'attack', player: this.myPlayer, ids, kind: TK.Building, target: b });
+      this.markers.ping(sim.buildings.centerX(b) / ONE, p.y, sim.buildings.centerY(b) / ONE, 0xff5a4a);
+      return;
+    }
     if (b >= 0 && sim.buildings.owner[b] === this.myPlayer) {
       sim.issue({ t: 'work', player: this.myPlayer, ids, building: b });
       this.markers.ping(sim.buildings.centerX(b) / ONE, p.y, sim.buildings.centerY(b) / ONE, 0xffe14a);
@@ -535,8 +627,17 @@ export class Game {
   issueMove(x: number, z: number): void {
     const ids = this.ownSelected();
     if (!ids.length) return;
-    this.sim.issue({ t: 'move', player: this.myPlayer, ids, x: Math.round(x * ONE), y: Math.round(z * ONE) });
+    this.sim.issue({ t: 'move', player: this.myPlayer, ids, x: Math.round(x * ONE), y: Math.round(z * ONE), spread: this.spread });
     this.markers.ping(x, this.terrain.heightAt(x, z), z);
+  }
+
+  /** 切換姿態：進攻 → 防守 → 堅守 → 不還擊 */
+  cycleStance(): void {
+    const ids = this.ownSelected().filter((id) => !UNIT_DEFS[this.sim.world.utype[id]].worker);
+    if (!ids.length) return;
+    const next = (this.sim.world.stance[ids[0]] + 1) % 4;
+    this.sim.issue({ t: 'stance', player: this.myPlayer, ids, stance: next });
+    this.hud.toast(`姿態：${['進攻', '防守', '堅守', '不還擊'][next]}`);
   }
 
   stopSelected(): void {
@@ -613,12 +714,39 @@ export class Game {
     const def = BUILDING_DEFS[pl.btype];
     pl.tx = Math.round(p.x - def.w / 2);
     pl.ty = Math.round(p.z - def.h / 2);
-    pl.valid = this.sim.canPlace(pl.btype, pl.tx, pl.ty) && this.sim.players[this.myPlayer].canAfford(def.cost);
+    pl.valid = (this.sim.canPlace(pl.btype, pl.tx, pl.ty) || !!pl.lineStart) && this.sim.players[this.myPlayer].canAfford(def.cost);
+  }
+
+  /** 牆的格子（4 連通直線，跟模擬層一致） */
+  lineTiles(x0: number, y0: number, x1: number, y1: number): [number, number][] {
+    const out: [number, number][] = [[x0, y0]];
+    let x = x0;
+    let y = y0;
+    for (let k = 0; k < 64 && (x !== x1 || y !== y1); k++) {
+      const dx = x1 - x;
+      const dy = y1 - y;
+      if (Math.abs(dx) >= Math.abs(dy)) x += Math.sign(dx);
+      else y += Math.sign(dy);
+      out.push([x, y]);
+    }
+    return out;
   }
 
   confirmPlacing(keep: boolean): void {
     const pl = this.placing;
     if (!pl) return;
+    // 牆：第一下定起點，第二下定終點
+    if (BUILDING_DEFS[pl.btype].wall) {
+      if (!pl.lineStart) {
+        pl.lineStart = [pl.tx, pl.ty];
+        this.hud.toast('再點一下終點，拉出一整排牆');
+        return;
+      }
+      const ids = this.ownSelected().filter((id) => UNIT_DEFS[this.sim.world.utype[id]].worker);
+      this.sim.issue({ t: 'buildLine', player: this.myPlayer, ids, btype: pl.btype, x0: pl.lineStart[0], y0: pl.lineStart[1], x1: pl.tx, y1: pl.ty });
+      this.placing = null;
+      return;
+    }
     if (!pl.valid) {
       this.hud.toast(this.sim.players[this.myPlayer].canAfford(BUILDING_DEFS[pl.btype].cost) ? '這裡不能蓋' : '資源不足');
       return;
@@ -649,11 +777,11 @@ export class Game {
     this.clearAll();
     this.sim.issue({ t: 'clear' });
     const [a, b] = this.sim.map.starts;
-    const types = [UNIT_INDEX.swordsman, UNIT_INDEX.spearman, UNIT_INDEX.archer];
+    const types = [UNIT_INDEX.swordsman, UNIT_INDEX.spearman, UNIT_INDEX.archer, UNIT_INDEX.light_cav];
     const half = Math.floor(n / 2);
     for (const [p, s] of [[0, a], [1, b]] as const) {
       types.forEach((t, i) => {
-        const cnt = Math.floor(half / 3) + (i < half % 3 ? 1 : 0);
+        const cnt = Math.floor(half / 4) + (i < half % 4 ? 1 : 0);
         this.sim.issue({ t: 'spawn', player: p, unit: t, x: (s.x + 0.5) * ONE, y: (s.y + 6.5) * ONE, count: cnt });
       });
     }
@@ -662,7 +790,7 @@ export class Game {
       for (const [p, target] of [[0, b], [1, a]] as const) {
         const ids: number[] = [];
         for (let id = 0; id < w.high; id++) if (w.alive[id] && w.owner[id] === p) ids.push(id);
-        this.sim.issue({ t: 'move', player: p, ids, x: (target.x + 0.5) * ONE, y: (target.y + 6.5) * ONE });
+        this.sim.issue({ t: 'attackMove', player: p, ids, x: (target.x + 0.5) * ONE, y: (target.y + 6.5) * ONE });
       }
     });
   }

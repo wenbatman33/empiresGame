@@ -11,6 +11,12 @@ export const S = { Idle: 0, Move: 1, Attack: 2, Dead: 3, Work: 4 } as const;
 export const NAV = { None: 0, Path: 1, Flow: 2, Direct: 3 } as const;
 /** 工作任務（民夫） */
 export const TASK = { None: 0, Gather: 1, Farm: 2, Return: 3, Build: 4 } as const;
+/** 戰鬥命令 */
+export const ORDER = { None: 0, Move: 1, Attack: 2, AttackMove: 3, Patrol: 4 } as const;
+/** 姿態（docs/03 §4）：進攻、防守（預設，追 8 格返回）、堅守、不還擊 */
+export const STANCE = { Aggressive: 0, Defensive: 1, Stand: 2, Passive: 3 } as const;
+/** 攻擊目標種類 */
+export const TK = { None: 0, Unit: 1, Building: 2 } as const;
 
 export class World {
   readonly alive = new Uint8Array(CAPACITY);
@@ -58,6 +64,22 @@ export class World {
   readonly prevTask = new Uint8Array(CAPACITY);
   readonly prevTarget = new Int32Array(CAPACITY).fill(-1);
 
+  // ── 戰鬥 ──
+  readonly order = new Uint8Array(CAPACITY);
+  readonly stance = new Uint8Array(CAPACITY);
+  readonly tgtKind = new Uint8Array(CAPACITY);
+  readonly tgt = new Int32Array(CAPACITY).fill(-1);
+  readonly cooldown = new Uint16Array(CAPACITY);
+  /** 攻擊移動的目的地、防守姿態的原點 */
+  readonly destX = new Int32Array(CAPACITY);
+  readonly destY = new Int32Array(CAPACITY);
+  readonly homeX = new Int32Array(CAPACITY);
+  readonly homeY = new Int32Array(CAPACITY);
+  /** 最近一次出手的 tick（渲染對齊攻擊動畫） */
+  readonly lastHit = new Int32Array(CAPACITY);
+  readonly lastAttacker = new Int32Array(CAPACITY).fill(-1);
+  readonly repath = new Uint16Array(CAPACITY);
+
   /** 曾經用過的最大 id ＋ 1；遍歷時只需掃到這裡 */
   high = 0;
   count = 0;
@@ -96,6 +118,16 @@ export class World {
     this.attempts[id] = 0;
     this.prevTask[id] = 0;
     this.prevTarget[id] = -1;
+    this.order[id] = 0;
+    this.stance[id] = def.worker ? STANCE.Passive : STANCE.Defensive;
+    this.tgtKind[id] = 0;
+    this.tgt[id] = -1;
+    this.cooldown[id] = 0;
+    this.destX[id] = this.homeX[id] = x;
+    this.destY[id] = this.homeY[id] = y;
+    this.lastHit[id] = -1000;
+    this.lastAttacker[id] = -1;
+    this.repath[id] = 0;
     this.count++;
     return id;
   }

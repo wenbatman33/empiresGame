@@ -16,6 +16,12 @@ const toCost = (c: Partial<Record<ResKey, number>> | undefined): Cost => [c?.foo
 /** 每秒速率 → 每 tick 千分之一單位 */
 const milliPerTick = (perSec: number): number => Math.round((perSec * 1000) / TICK_HZ);
 
+/** 兵種標籤（傷害加成依標籤計算，docs/03 §2） */
+export const TAGS = ['infantry', 'cavalry', 'archer', 'spear', 'siege', 'building', 'ship', 'hero', 'strategist', 'villager'] as const;
+export const TAG: Record<string, number> = Object.fromEntries(TAGS.map((t, i) => [t, 1 << i]));
+const toTags = (list: string[] | undefined): number => (list ?? []).reduce((m, t) => m | (TAG[t] ?? 0), 0);
+const toBonus = (b: Record<string, number> | undefined): [number, number][] => Object.entries(b ?? {}).map(([t, v]) => [TAG[t] ?? 0, v]);
+
 export interface UnitDef {
   id: string;
   name: string;
@@ -28,21 +34,38 @@ export interface UnitDef {
   pop: number;
   worker: boolean;
   age: number;
+  attack: number;
+  cooldownTicks: number;
+  /** [近甲, 遠甲] */
+  armor: [number, number];
+  /** 射程（定點數）；0 ＝ 近戰 */
+  rangeFx: number;
+  tags: number;
+  bonus: [number, number][];
 }
 
-export const UNIT_DEFS: UnitDef[] = unitsData.map((u) => ({
-  id: u.id,
-  name: u.name,
-  hp: u.hp,
-  speedFx: speedPerTick(u.speed),
-  radiusFx: toFx(u.radius),
-  sight: u.sight,
-  cost: toCost(u.cost),
-  trainTicks: Math.round(u.train * TICK_HZ),
-  pop: u.pop,
-  worker: !!(u as { worker?: boolean }).worker,
-  age: u.age,
-}));
+export const UNIT_DEFS: UnitDef[] = unitsData.map((u) => {
+  const raw = u as typeof u & { worker?: boolean; bonus?: Record<string, number> };
+  return {
+    id: u.id,
+    name: u.name,
+    hp: u.hp,
+    speedFx: speedPerTick(u.speed),
+    radiusFx: toFx(u.radius),
+    sight: u.sight,
+    cost: toCost(u.cost),
+    trainTicks: Math.round(u.train * TICK_HZ),
+    pop: u.pop,
+    worker: !!raw.worker,
+    age: u.age,
+    attack: u.attack,
+    cooldownTicks: Math.round(u.cooldown * TICK_HZ),
+    armor: [u.armor[0], u.armor[1]],
+    rangeFx: toFx(u.range),
+    tags: toTags(u.tags),
+    bonus: toBonus(raw.bonus),
+  };
+});
 export const UNIT_INDEX: Record<string, number> = Object.fromEntries(UNIT_DEFS.map((u, i) => [u.id, i]));
 
 export interface BuildingDef {
@@ -60,10 +83,18 @@ export interface BuildingDef {
   walkable: boolean;
   food: number;
   age: number;
+  armor: [number, number];
+  sight: number;
+  /** 防禦攻擊（0 ＝ 不會射箭） */
+  attack: number;
+  rangeFx: number;
+  cooldownTicks: number;
+  /** 牆（拖曳成一列放置） */
+  wall: boolean;
 }
 
 export const BUILDING_DEFS: BuildingDef[] = buildingsData.map((b) => {
-  const raw = b as typeof b & { pop?: number; drop?: string[]; trains?: string[]; walkable?: boolean; food?: number };
+  const raw = b as typeof b & { pop?: number; drop?: string[]; trains?: string[]; walkable?: boolean; food?: number; attack?: number; range?: number; cooldown?: number; wall?: boolean };
   return {
     id: b.id,
     name: b.name,
@@ -78,6 +109,12 @@ export const BUILDING_DEFS: BuildingDef[] = buildingsData.map((b) => {
     walkable: !!raw.walkable,
     food: raw.food ?? 0,
     age: b.age,
+    armor: [b.armor[0], b.armor[1]],
+    sight: b.sight,
+    attack: raw.attack ?? 0,
+    rangeFx: toFx(raw.range ?? 0),
+    cooldownTicks: Math.round((raw.cooldown ?? 2) * TICK_HZ),
+    wall: !!raw.wall,
   };
 });
 export const BUILDING_INDEX: Record<string, number> = Object.fromEntries(BUILDING_DEFS.map((b, i) => [b.id, i]));

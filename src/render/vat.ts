@@ -1,7 +1,7 @@
 // VAT（頂點動畫貼圖，docs/07 §5）：把每個動畫每一格的頂點位置烘成浮點貼圖
 // vertex shader 依實例屬性（動畫列、格數、起始時間、長度）取樣，一個兵種一次 draw call 畫完
 import * as THREE from 'three';
-import { ANIMS, ANIM_ORDER, PARENT, PIVOT, ROOT_PIVOT, poseAt, type AnimName, type ModelGeometry, type WeaponKind } from '../models/soldier';
+import { ANIMS, ANIM_ORDER, poseAt, type AnimName, type ModelGeometry, type WeaponKind } from '../models/soldier';
 
 export interface AnimRow {
   row: number;
@@ -31,6 +31,9 @@ export function bakeVat(model: ModelGeometry, kind: WeaponKind): BakedModel {
     rows += ANIMS[a].frames;
   }
   const data = new Float32Array(n * rows * 4);
+  const PARENT = model.parent;
+  const PIVOT = model.pivot;
+  const ROOT_PIVOT = model.rootPivot;
   const partM = Array.from({ length: PARENT.length }, () => new THREE.Matrix4());
   const rootM = new THREE.Matrix4();
   const v = new THREE.Vector3();
@@ -39,11 +42,12 @@ export function bakeVat(model: ModelGeometry, kind: WeaponKind): BakedModel {
     const spec = anims[a];
     for (let f = 0; f < spec.frames; f++) {
       const t = spec.loop ? f / spec.frames : f / (spec.frames - 1);
-      const pose = poseAt(kind, a, t);
+      const pose = poseAt(kind, a, t, model.mounted);
       // 根：位移 ＋ 以腳跟為軸傾倒
       rootM.makeTranslation(0, pose.root.y, pose.root.z);
       rootM.multiply(_t.makeTranslation(ROOT_PIVOT[0], ROOT_PIVOT[1], ROOT_PIVOT[2]));
       rootM.multiply(_t.makeRotationX(pose.root.rx));
+      rootM.multiply(_t.makeRotationZ(pose.root.rz));
       rootM.multiply(_t.makeTranslation(-ROOT_PIVOT[0], -ROOT_PIVOT[1], -ROOT_PIVOT[2]));
       // 部件：父矩陣 × 以關節為軸旋轉
       for (let p = 0; p < PARENT.length; p++) {

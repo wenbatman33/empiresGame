@@ -27,6 +27,9 @@ export class Buildings {
   readonly rallyY = new Int32Array(Buildings.CAP).fill(-1);
   readonly rallyRes = new Int32Array(Buildings.CAP).fill(-1);
   readonly createdTick = new Int32Array(Buildings.CAP);
+  /** 防禦建築射箭冷卻 */
+  readonly cooldown = new Uint16Array(Buildings.CAP);
+  readonly lastAttacker = new Int32Array(Buildings.CAP).fill(-1);
   high = 0;
   count = 0;
   private free: number[] = [];
@@ -52,6 +55,8 @@ export class Buildings {
     this.rallyY[id] = -1;
     this.rallyRes[id] = -1;
     this.createdTick[id] = tick;
+    this.cooldown[id] = 0;
+    this.lastAttacker[id] = -1;
     this.count++;
     return id;
   }
@@ -140,5 +145,45 @@ export class Player {
 
   refund(c: Cost): void {
     for (let i = 0; i < 4; i++) this.res[i] += c[i];
+  }
+}
+
+/** 投射物（箭、石）：起點 → 終點的直線飛行，渲染層自己加拋物線 */
+export class Projectiles {
+  static readonly CAP = 4096;
+  readonly alive = new Uint8Array(Projectiles.CAP);
+  readonly owner = new Uint8Array(Projectiles.CAP);
+  readonly sx = new Int32Array(Projectiles.CAP);
+  readonly sy = new Int32Array(Projectiles.CAP);
+  readonly tx = new Int32Array(Projectiles.CAP);
+  readonly ty = new Int32Array(Projectiles.CAP);
+  /** 起點高度（高度單位：1 格 = 64；建築射出的箭比較高） */
+  readonly h0 = new Int16Array(Projectiles.CAP);
+  readonly t = new Uint16Array(Projectiles.CAP);
+  readonly dur = new Uint16Array(Projectiles.CAP);
+  readonly tgtKind = new Uint8Array(Projectiles.CAP);
+  readonly tgt = new Int32Array(Projectiles.CAP);
+  readonly dmg = new Int32Array(Projectiles.CAP);
+  readonly hit = new Uint8Array(Projectiles.CAP);
+  /** 射手（被打的一方用來反擊） */
+  readonly from = new Int32Array(Projectiles.CAP);
+  high = 0;
+  count = 0;
+  private free: number[] = [];
+
+  add(): number {
+    const id = this.free.length ? this.free.pop()! : this.high++;
+    if (id >= Projectiles.CAP) return -1;
+    this.alive[id] = 1;
+    this.t[id] = 0;
+    this.count++;
+    return id;
+  }
+
+  remove(id: number): void {
+    if (!this.alive[id]) return;
+    this.alive[id] = 0;
+    this.count--;
+    this.free.push(id);
   }
 }

@@ -1,9 +1,15 @@
 [
-  { "id": "town_hall", "name": "太守府", "w": 4, "h": 4, "hp": 2400, "cost": { "wood": 275, "stone": 100 }, "build": 150, "pop": 10, "drop": ["food", "wood", "gold", "stone"], "trains": ["villager"], "age": 2 },
-  { "id": "house", "name": "民居", "w": 2, "h": 2, "hp": 550, "cost": { "wood": 25 }, "build": 20, "pop": 5, "age": 1 },
-  { "id": "granary", "name": "糧倉", "w": 2, "h": 2, "hp": 1000, "cost": { "wood": 100 }, "build": 30, "drop": ["food"], "age": 1 },
-  { "id": "lumber_camp", "name": "伐木場", "w": 2, "h": 2, "hp": 1000, "cost": { "wood": 100 }, "build": 30, "drop": ["wood"], "age": 1 },
-  { "id": "mine_camp", "name": "礦場", "w": 2, "h": 2, "hp": 1000, "cost": { "wood": 100 }, "build": 30, "drop": ["gold", "stone"], "age": 1 },
-  { "id": "farm", "name": "農田", "w": 3, "h": 3, "hp": 480, "cost": { "wood": 60 }, "build": 15, "walkable": true, "food": 300, "age": 1 },
-  { "id": "barracks", "name": "兵營", "w": 3, "h": 3, "hp": 1200, "cost": { "wood": 175 }, "build": 50, "trains": ["swordsman", "spearman"], "age": 1 }
+  { "id": "town_hall", "name": "太守府", "w": 4, "h": 4, "hp": 2400, "armor": [3, 5], "sight": 8, "cost": { "wood": 275, "stone": 100 }, "build": 150, "pop": 10, "drop": ["food", "wood", "gold", "stone"], "trains": ["villager"], "age": 2, "attack": 5, "range": 6, "cooldown": 2.0 },
+  { "id": "house", "name": "民居", "w": 2, "h": 2, "hp": 550, "armor": [0, 5], "sight": 3, "cost": { "wood": 25 }, "build": 20, "pop": 5, "age": 1 },
+  { "id": "granary", "name": "糧倉", "w": 2, "h": 2, "hp": 1000, "armor": [0, 5], "sight": 4, "cost": { "wood": 100 }, "build": 30, "drop": ["food"], "age": 1 },
+  { "id": "lumber_camp", "name": "伐木場", "w": 2, "h": 2, "hp": 1000, "armor": [0, 5], "sight": 4, "cost": { "wood": 100 }, "build": 30, "drop": ["wood"], "age": 1 },
+  { "id": "mine_camp", "name": "礦場", "w": 2, "h": 2, "hp": 1000, "armor": [0, 5], "sight": 4, "cost": { "wood": 100 }, "build": 30, "drop": ["gold", "stone"], "age": 1 },
+  { "id": "farm", "name": "農田", "w": 3, "h": 3, "hp": 480, "armor": [0, 0], "sight": 2, "cost": { "wood": 60 }, "build": 15, "walkable": true, "food": 300, "age": 1 },
+  { "id": "barracks", "name": "兵營", "w": 3, "h": 3, "hp": 1200, "armor": [0, 5], "sight": 4, "cost": { "wood": 175 }, "build": 50, "trains": ["swordsman", "spearman"], "age": 1 },
+  { "id": "archery", "name": "弓營", "w": 3, "h": 3, "hp": 1200, "armor": [0, 5], "sight": 4, "cost": { "wood": 175 }, "build": 50, "trains": ["archer", "horse_archer"], "age": 2 },
+  { "id": "stable", "name": "馬廄", "w": 3, "h": 3, "hp": 1200, "armor": [0, 5], "sight": 4, "cost": { "wood": 175 }, "build": 50, "trains": ["light_cav", "heavy_cav"], "age": 2 },
+  { "id": "blacksmith", "name": "鐵匠鋪", "w": 3, "h": 3, "hp": 1500, "armor": [0, 5], "sight": 4, "cost": { "wood": 150 }, "build": 40, "age": 2 },
+  { "id": "tower", "name": "箭塔", "w": 1, "h": 1, "hp": 1000, "armor": [1, 7], "sight": 9, "cost": { "wood": 25, "stone": 125 }, "build": 60, "age": 2, "attack": 5, "range": 8, "cooldown": 2.0 },
+  { "id": "palisade", "name": "柵欄", "w": 1, "h": 1, "hp": 250, "armor": [0, 0], "sight": 2, "cost": { "wood": 2 }, "build": 3, "age": 1, "wall": true },
+  { "id": "wall", "name": "石牆", "w": 1, "h": 1, "hp": 1800, "armor": [8, 10], "sight": 2, "cost": { "stone": 5 }, "build": 6, "age": 2, "wall": true }
 ]

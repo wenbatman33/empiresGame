@@ -192,13 +192,13 @@ export class MovementSystem {
       cx[id] = 0;
       cy[id] = 0;
       this.touched[id] = 0;
-      if (!w.alive[id]) continue;
+      if (!w.alive[id] || w.state[id] === S.Dead) continue;
       const c = (w.y[id] >> FX_SHIFT) * W + (w.x[id] >> FX_SHIFT);
       next[id] = head[c];
       head[c] = id;
     }
     for (let i = 0; i < high; i++) {
-      if (!w.alive[i]) continue;
+      if (!w.alive[i] || w.state[i] === S.Dead) continue;
       const xi = w.x[i];
       const yi = w.y[i];
       const ri = w.radius[i];
@@ -212,7 +212,7 @@ export class MovementSystem {
           const cxx = tx + ox;
           if (cxx < 0 || cxx >= W) continue;
           for (let j = head[cyy * W + cxx]; j !== -1; j = next[j]) {
-            if (j <= i) continue;
+            if (j <= i || w.state[j] === S.Dead) continue;
             const dx = w.x[j] - xi;
             const dy = w.y[j] - yi;
             const rr = ri + w.radius[j];

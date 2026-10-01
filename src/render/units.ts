@@ -28,6 +28,8 @@ export class UnitRenderer {
   readonly yaw = new Float32Array(CAPACITY);
   private readonly curAnim = new Int8Array(CAPACITY).fill(-1);
   private readonly animStart = new Float32Array(CAPACITY);
+  /** 這一幀有沒有畫（迷霧裡的敵軍不畫，選取圈、血條也跟著隱藏） */
+  readonly seen = new Uint8Array(CAPACITY);
   private readonly teamRgb = PLAYER_COLORS.map((c) => new THREE.Color(c));
   /** DEV：強制所有單位播某個動畫 */
   forceAnim: AnimName | null = null;
@@ -55,6 +57,11 @@ export class UnitRenderer {
     }
   }
 
+  /** 地面高度（血條等標記用） */
+  groundAt(x: number, z: number): number {
+    return this.terrain.heightAt(x, z);
+  }
+
   /** 每個兵種的三角形數（DEV 顯示） */
   get trianglesPerType(): number[] {
     return this.types.map((t) => t.baked.vertexCount / 3);
@@ -66,7 +73,7 @@ export class UnitRenderer {
   }
 
   /** bounds：畫面看得到的地面範圍 [x0,z0,x1,z1]，範圍外的單位不送進 GPU */
-  update(sim: Sim, alpha: number, time: number, dt: number, bounds: [number, number, number, number] | null): void {
+  update(sim: Sim, alpha: number, time: number, dt: number, bounds: [number, number, number, number] | null, myPlayer = 0, visible: (tx: number, ty: number) => boolean = () => true): void {
     vatTime.value = time;
     const w = sim.world;
     const counts = new Int32Array(this.types.length);
@@ -79,10 +86,17 @@ export class UnitRenderer {
       }
       const x = (w.px[id] + (w.x[id] - w.px[id]) * alpha) / ONE;
       const z = (w.py[id] + (w.y[id] - w.py[id]) * alpha) / ONE;
-      const y = this.terrain.heightAt(x, z);
+      let y = this.terrain.heightAt(x, z);
+      // 屍體最後 1.5 秒沉入地面
+      if (w.state[id] === S.Dead) {
+        const since = (sim.tick - w.stateTick[id]) / 10;
+        if (since > 4.5) y -= (since - 4.5) * 0.5;
+      }
       this.wx[id] = x;
       this.wy[id] = y;
       this.wz[id] = z;
+      this.seen[id] = w.owner[id] === myPlayer || visible(Math.floor(x), Math.floor(z)) ? 1 : 0;
+      if (!this.seen[id]) continue;
 
       // 朝向平滑轉動
       if (w.fx[id] !== 0 || w.fy[id] !== 0) {
@@ -95,14 +109,15 @@ export class UnitRenderer {
 
       // 動畫
       const st = w.state[id];
-      const name: AnimName = this.forceAnim ?? (st === S.Move ? 'walk' : st === S.Dead ? 'die' : st === S.Work ? 'work' : 'idle');
+      const name: AnimName = this.forceAnim ?? (st === S.Move ? 'walk' : st === S.Dead ? 'die' : st === S.Work ? 'work' : st === S.Attack ? 'attack' : 'idle');
       const tm = this.types[w.utype[id]];
       const row = tm.baked.anims[name];
       const animIdx = row.row;
       if (this.curAnim[id] !== animIdx) {
         this.curAnim[id] = animIdx;
         // 待機動畫錯開相位，整隊才不會同步呼吸
-        this.animStart[id] = name === 'idle' ? time - ((id * 0.618) % 1) * row.dur : time;
+        // 待機錯開相位；攻擊讓「出手」落在第一下傷害的時間點
+        this.animStart[id] = name === 'idle' ? time - ((id * 0.618) % 1) * row.dur : name === 'attack' ? time - row.dur * 0.45 : time;
       }
 
       if (bounds && (x < bounds[0] || z < bounds[1] || x > bounds[2] || z > bounds[3])) continue;

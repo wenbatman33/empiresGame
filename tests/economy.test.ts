@@ -33,12 +33,12 @@ const spotNear = (sim: Sim, btype: number, p = 0): [number, number] => {
 };
 
 describe('經濟', () => {
-  it('標準開局：每位玩家一座太守府、4 名民夫、人口 4/10、起始資源', () => {
+  it('標準開局：每位玩家一座太守府、4 名民夫＋斥候、人口 5/10、起始資源', () => {
     const sim = new Sim({ seed: 11 });
     expect(townHall(sim, 0)).toBeGreaterThanOrEqual(0);
     expect(townHall(sim, 1)).toBeGreaterThanOrEqual(0);
     expect(myVillagers(sim).length).toBe(4);
-    expect(sim.players[0].pop).toBe(4);
+    expect(sim.players[0].pop).toBe(5);
     expect(sim.players[0].popCap).toBe(10);
     expect(sim.players[0].res).toEqual([200, 200, 100, 150]);
     // 雙方起始資源點數量相同（對稱放置）

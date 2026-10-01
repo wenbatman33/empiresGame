@@ -2,6 +2,7 @@
 // 地形材質預留一張疊加貼圖（DEV 通行格網，之後的戰爭迷霧也用它）
 import * as THREE from 'three';
 import { HEIGHT_UNIT, T, WATER_LEVEL, type MapGrid } from '../sim/map/grid';
+import { withFog } from './fog';
 
 const CHUNK = 32;
 const TILE_COLOR: Record<number, number> = {
@@ -64,6 +65,8 @@ export class Terrain {
           '#include <color_fragment>\n  if (uOverlayOn > 0.5) { vec4 ov = texture2D(uOverlay, vMapUv); diffuseColor.rgb = mix(diffuseColor.rgb, ov.rgb, ov.a); }',
         );
     };
+    this.material.customProgramCacheKey = () => 'terrain';
+    withFog(this.material);
 
     this.tileRgb = new Uint8Array(w * h * 3);
     for (let i = 0; i < w * h; i++) {
@@ -84,7 +87,7 @@ export class Terrain {
 
     const water = new THREE.Mesh(
       new THREE.PlaneGeometry(w, h).rotateX(-Math.PI / 2).translate(w / 2, WATER_Y, h / 2),
-      new THREE.MeshPhongMaterial({ color: 0x4a93cc, transparent: true, opacity: 0.74, shininess: 70, specular: 0xcfe9ff }),
+      withFog(new THREE.MeshPhongMaterial({ color: 0x4a93cc, transparent: true, opacity: 0.74, shininess: 70, specular: 0xcfe9ff })),
     );
     water.receiveShadow = true;
     water.renderOrder = 1;
@@ -169,7 +172,7 @@ export class Terrain {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.computeVertexNormals();
-    return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0x6b5236, flatShading: true }));
+    return new THREE.Mesh(g, withFog(new THREE.MeshLambertMaterial({ color: 0x6b5236, flatShading: true })));
   }
 
   /** DEV：設定疊加層（null ＝ 透明） */

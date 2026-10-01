@@ -3,7 +3,16 @@
 
 export type Command =
   | { t: 'spawn'; tick: number; player: number; unit: number; x: number; y: number; count: number }
-  | { t: 'move'; tick: number; player: number; ids: number[]; x: number; y: number }
+  | { t: 'move'; tick: number; player: number; ids: number[]; x: number; y: number; spread?: boolean }
+  /** 攻擊單位（kind 1）或建築（kind 2） */
+  | { t: 'attack'; tick: number; player: number; ids: number[]; kind: number; target: number }
+  /** 攻擊移動：沿路遇敵就打 */
+  | { t: 'attackMove'; tick: number; player: number; ids: number[]; x: number; y: number; spread?: boolean }
+  | { t: 'stance'; tick: number; player: number; ids: number[]; stance: number }
+  /** 巡邏：在目前位置與目標點之間來回，沿路遇敵就打 */
+  | { t: 'patrol'; tick: number; player: number; ids: number[]; x: number; y: number }
+  /** 牆：從 (x0,y0) 到 (x1,y1) 一整列（格子座標） */
+  | { t: 'buildLine'; tick: number; player: number; ids: number[]; btype: number; x0: number; y0: number; x1: number; y1: number }
   | { t: 'stop'; tick: number; player: number; ids: number[] }
   | { t: 'clear'; tick: number }
   /** 民夫蓋建築（tx,ty 為左上角格） */
@@ -20,7 +29,7 @@ export type Command =
   | { t: 'reseed'; tick: number; player: number; on: boolean }
   | { t: 'destroy'; tick: number; player: number; building: number }
   /** DEV 作弊（也走指令，重播才一致） */
-  | { t: 'cheat'; tick: number; player: number; kind: 'res' | 'build' };
+  | { t: 'cheat'; tick: number; player: number; kind: 'res' | 'build' | 'age' };
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 export type CommandInput = DistributiveOmit<Command, 'tick'>;

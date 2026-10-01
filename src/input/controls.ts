@@ -226,6 +226,10 @@ export class Controls {
     if (e.code === 'Escape') g.clearSelection();
     else if (e.code === 'Delete') g.destroySelectedBuilding();
     else if (e.code === 'KeyH') g.goHome();
+    else if (e.code === 'Space') {
+      e.preventDefault();
+      g.jumpToAlert();
+    }
     else if (e.code === 'Period') g.selectIdleVillager();
     else if (e.code === 'KeyP') g.togglePause();
     else if (/^Digit[1-5]$/.test(e.code)) {

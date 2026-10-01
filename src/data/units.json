@@ -1,6 +1,10 @@
 [
-  {"id": "villager", "name": "民夫", "hp": 25, "speed": 0.85, "radius": 0.26, "sight": 4, "cost": {"food": 50}, "train": 18, "pop": 1, "worker": true, "age": 1},
-  {"id": "swordsman", "name": "刀盾兵", "hp": 45, "speed": 0.9, "radius": 0.28, "sight": 4, "cost": {"food": 50, "gold": 20}, "train": 18, "pop": 1, "age": 1},
-  {"id": "spearman", "name": "槍兵", "hp": 45, "speed": 1.0, "radius": 0.28, "sight": 4, "cost": {"food": 35, "wood": 25}, "train": 20, "pop": 1, "age": 2},
-  {"id": "archer", "name": "弓兵", "hp": 30, "speed": 0.95, "radius": 0.26, "sight": 6, "cost": {"wood": 25, "gold": 45}, "train": 25, "pop": 1, "age": 2}
+  { "id": "villager", "name": "民夫", "hp": 25, "speed": 0.85, "radius": 0.26, "sight": 4, "cost": { "food": 50 }, "train": 18, "pop": 1, "age": 1, "worker": true, "attack": 3, "cooldown": 2.0, "armor": [0, 1], "range": 0, "tags": ["infantry", "villager"] },
+  { "id": "swordsman", "name": "刀盾兵", "hp": 45, "speed": 0.9, "radius": 0.28, "sight": 4, "cost": { "food": 50, "gold": 20 }, "train": 18, "pop": 1, "age": 1, "attack": 5, "cooldown": 2.0, "armor": [0, 1], "range": 0, "tags": ["infantry"], "bonus": { "spear": 4, "building": 3 } },
+  { "id": "spearman", "name": "槍兵", "hp": 45, "speed": 1.0, "radius": 0.28, "sight": 4, "cost": { "food": 35, "wood": 25 }, "train": 20, "pop": 1, "age": 2, "attack": 3, "cooldown": 3.0, "armor": [0, 0], "range": 0, "tags": ["infantry", "spear"], "bonus": { "cavalry": 15 } },
+  { "id": "archer", "name": "弓兵", "hp": 30, "speed": 0.95, "radius": 0.26, "sight": 6, "cost": { "wood": 25, "gold": 45 }, "train": 25, "pop": 1, "age": 2, "attack": 4, "cooldown": 2.0, "armor": [0, 0], "range": 4, "tags": ["infantry", "archer"], "bonus": { "infantry": 3 } },
+  { "id": "scout", "name": "斥候騎", "hp": 45, "speed": 1.6, "radius": 0.34, "sight": 8, "cost": { "food": 80 }, "train": 25, "pop": 1, "age": 1, "attack": 3, "cooldown": 2.0, "armor": [0, 2], "range": 0, "tags": ["cavalry"] },
+  { "id": "light_cav", "name": "輕騎", "hp": 60, "speed": 1.5, "radius": 0.34, "sight": 8, "cost": { "food": 80 }, "train": 26, "pop": 1, "age": 2, "attack": 5, "cooldown": 2.0, "armor": [0, 2], "range": 0, "tags": ["cavalry"], "bonus": { "archer": 4, "siege": 5, "strategist": 6 } },
+  { "id": "heavy_cav", "name": "重騎", "hp": 110, "speed": 1.35, "radius": 0.36, "sight": 5, "cost": { "food": 60, "gold": 75 }, "train": 30, "pop": 1, "age": 3, "attack": 9, "cooldown": 1.9, "armor": [2, 2], "range": 0, "tags": ["cavalry"], "bonus": { "archer": 4 } },
+  { "id": "horse_archer", "name": "弓騎", "hp": 50, "speed": 1.4, "radius": 0.34, "sight": 6, "cost": { "wood": 40, "gold": 70 }, "train": 34, "pop": 1, "age": 3, "attack": 4, "cooldown": 2.0, "armor": [0, 0], "range": 4, "tags": ["cavalry", "archer"], "bonus": { "infantry": 2 } }
 ]

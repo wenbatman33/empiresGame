@@ -5,6 +5,7 @@ import { T, type MapGrid } from '../sim/map/grid';
 import type { Terrain } from './terrain';
 import { vatTime } from './vat';
 import { STUMP } from '../models/resources';
+import { withFog } from './fog';
 
 function colored(geo: THREE.BufferGeometry, hex: number, m: THREE.Matrix4): THREE.BufferGeometry {
   const g = (geo.index ? geo.toNonIndexed() : geo).applyMatrix4(m);
@@ -82,6 +83,7 @@ export class Trees {
         );
     };
     mat.customProgramCacheKey = () => 'tree-sway';
+    withFog(mat);
     const geos = [broadleaf(), pine()];
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -109,7 +111,7 @@ export class Trees {
         }
       }
     }
-    this.stumps = new THREE.InstancedMesh(STUMP(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 4096);
+    this.stumps = new THREE.InstancedMesh(STUMP(), withFog(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })), 4096);
     this.stumps.count = 0;
     this.stumps.frustumCulled = false;
     this.stumps.receiveShadow = true;

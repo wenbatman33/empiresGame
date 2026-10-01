@@ -165,7 +165,102 @@ function barracks(): THREE.BufferGeometry {
   return b.build();
 }
 
+function archery(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  platform(b, 2.9, 2.9);
+  b.add(box(2.3, 0.8, 1.2), EARTH, M(0, 0.12 + 0.4, -0.75));
+  b.add(gable(2.6, 0.7, 1.7), THATCH, M(0, 0.92, -0.75));
+  b.add(box(0.5, 0.6, 0.05), DOOR, M(-0.5, 0.42, -0.14));
+  b.add(box(0.44, 0.3, 0.03), TEAM, M(-0.5, 0.62, -0.11), 1);
+  // 箭靶
+  for (const x of [-0.6, 0.6]) {
+    b.add(cyl(0.03, 0.03, 0.7, 4), WOOD, M(x, 0.45, 1.05));
+    b.add(cyl(0.28, 0.28, 0.06, 10), 0xe8d9b0, M(x, 0.75, 1.0, Math.PI / 2));
+    b.add(cyl(0.17, 0.17, 0.07, 10), 0xc8463c, M(x, 0.75, 1.0, Math.PI / 2));
+    b.add(cyl(0.07, 0.07, 0.08, 8), 0xe8d9b0, M(x, 0.75, 1.0, Math.PI / 2));
+  }
+  // 弓架
+  b.add(box(0.06, 0.6, 0.06), WOOD, M(0.9, 0.42, 0.1));
+  b.add(box(0.06, 0.6, 0.06), WOOD, M(1.25, 0.42, 0.1));
+  b.add(box(0.45, 0.05, 0.05), WOOD, M(1.07, 0.6, 0.1));
+  banner(b, 1.3, -1.35, 2.1, 1.0);
+  return b.build();
+}
+
+function stable(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  platform(b, 2.9, 2.9);
+  // 長形馬房：前面開放
+  b.add(box(2.6, 0.7, 0.12), PLANK, M(0, 0.47, -1.2));
+  b.add(box(0.12, 0.7, 1.2), PLANK, M(-1.25, 0.47, -0.65));
+  b.add(box(0.12, 0.7, 1.2), PLANK, M(1.25, 0.47, -0.65));
+  for (const x of [-0.42, 0.42]) b.add(box(0.08, 0.5, 1.0), PLANK, M(x, 0.37, -0.7));
+  b.add(gable(2.8, 0.6, 1.6), THATCH, M(0, 0.82, -0.65));
+  for (const x of [-1.2, 0, 1.2]) b.add(cyl(0.05, 0.06, 0.7, 5), WOOD, M(x, 0.47, -0.05));
+  // 馬槽與草料
+  b.add(box(1.2, 0.18, 0.25), PLANK, M(0.3, 0.21, 0.55));
+  b.add(ico(0.22), 0xd9b96a, M(-0.8, 0.25, 0.75, 0, 0, 0, 1.2, 0.8, 1));
+  b.add(ico(0.18), 0xcaa35a, M(-0.5, 0.22, 0.95, 0, 0, 0, 1.1, 0.8, 1));
+  banner(b, 1.3, 1.25, 2.0, 1.0);
+  return b.build();
+}
+
+function blacksmith(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  platform(b, 2.9, 2.9);
+  b.add(box(1.9, 0.85, 1.3), EARTH_DARK, M(-0.2, 0.12 + 0.425, -0.55));
+  b.add(gable(2.2, 0.65, 1.8), 0x7b6a58, M(-0.2, 0.97, -0.55));
+  // 煙囪與火爐
+  b.add(box(0.35, 1.1, 0.35), 0x8a7a68, M(0.75, 1.0, -0.9));
+  b.add(box(0.6, 0.45, 0.5), 0x8a7a68, M(0.75, 0.35, 0.35));
+  b.add(box(0.3, 0.15, 0.05), 0xff8a3a, M(0.75, 0.35, 0.61));
+  // 鐵砧
+  b.add(box(0.35, 0.15, 0.18), 0x4a4f55, M(-0.3, 0.42, 0.6));
+  b.add(box(0.15, 0.22, 0.12), 0x4a4f55, M(-0.3, 0.26, 0.6));
+  b.add(box(0.34, 0.25, 0.03), TEAM, M(-0.2, 0.62, 0.11), 1);
+  banner(b, -1.3, 1.25, 1.8, 0.9);
+  return b.build();
+}
+
+function tower(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(box(0.95, 0.9, 0.95), BASE, M(0, -0.3, 0));
+  b.add(box(0.75, 1.5, 0.75), 0xa39684, M(0, 0.9, 0));
+  for (const y of [0.45, 1.05]) b.add(box(0.78, 0.06, 0.78), 0x8a7d6c, M(0, y, 0));
+  // 望樓
+  b.add(box(0.95, 0.12, 0.95), PLANK, M(0, 1.7, 0));
+  for (const [x, z] of [[-0.42, -0.42], [0.42, -0.42], [-0.42, 0.42], [0.42, 0.42]]) b.add(cyl(0.035, 0.035, 0.5, 4), WOOD, M(x, 2.0, z));
+  b.add(box(0.95, 0.18, 0.04), PLANK, M(0, 1.85, 0.46));
+  b.add(box(0.95, 0.18, 0.04), PLANK, M(0, 1.85, -0.46));
+  b.add(pyramid(1.15, 0.5, 1.15), THATCH, M(0, 2.25, 0));
+  b.add(box(0.2, 0.3, 0.04), DOOR, M(0, 0.3, 0.38));
+  banner(b, 0, 0, 3.1, 0.7);
+  return b.build();
+}
+
+function palisade(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  for (const [x, z] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3], [0, 0]]) b.add(cyl(0.11, 0.12, 1.0, 5), 0x8a5a32, M(x, 0.4, z));
+  for (const [x, z] of [[-0.3, -0.3], [0.3, -0.3], [-0.3, 0.3], [0.3, 0.3], [0, 0]]) b.add(cone(0.11, 0.18, 5), 0x7a4a2a, M(x, 0.99, z));
+  return b.build();
+}
+
+function wall(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(box(1.02, 1.6, 1.02), 0xa39684, M(0, 0.2, 0));
+  b.add(box(1.04, 0.08, 1.04), 0x8a7d6c, M(0, 0.6, 0));
+  // 雉堞
+  for (const [x, z] of [[-0.35, -0.35], [0.35, -0.35], [-0.35, 0.35], [0.35, 0.35]]) b.add(box(0.26, 0.22, 0.26), 0x9a8d7b, M(x, 1.11, z));
+  return b.build();
+}
+
 export const BUILDING_MODELS: Record<string, () => THREE.BufferGeometry> = {
+  archery,
+  stable,
+  blacksmith,
+  tower,
+  palisade,
+  wall,
   town_hall: townHall,
   house,
   granary,
@@ -184,4 +279,10 @@ export const BUILDING_HEIGHT: Record<string, number> = {
   mine_camp: 1.2,
   farm: 0.4,
   barracks: 2.0,
+  archery: 1.9,
+  stable: 1.6,
+  blacksmith: 2.0,
+  tower: 3.0,
+  palisade: 1.1,
+  wall: 1.3,
 };

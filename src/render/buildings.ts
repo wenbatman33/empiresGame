@@ -7,6 +7,7 @@ import { makeTeamMaterial } from '../models/geo';
 import { BUILDING_DEFS } from '../sim/core/defs';
 import type { Sim } from '../sim/sim';
 import type { Terrain } from './terrain';
+import { withFog } from './fog';
 
 const CAP = 256;
 
@@ -33,7 +34,7 @@ export class BuildingRenderer {
   private readonly geos: THREE.BufferGeometry[] = [];
 
   constructor(private terrain: Terrain) {
-    const mat = makeTeamMaterial();
+    const mat = withFog(makeTeamMaterial());
     for (const def of BUILDING_DEFS) {
       const geo = (BUILDING_MODELS[def.id] ?? BUILDING_MODELS.house)();
       this.geos.push(geo);
@@ -50,14 +51,14 @@ export class BuildingRenderer {
       this.group.add(mesh);
       this.types.push({ mesh, team });
     }
-    this.crops = new THREE.InstancedMesh(farmCrops(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), CAP);
+    this.crops = new THREE.InstancedMesh(farmCrops(), withFog(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })), CAP);
     this.crops.count = 0;
     this.crops.castShadow = true;
     this.crops.frustumCulled = false;
     this.group.add(this.crops);
 
     // 地基：淡色方塊，標出施工範圍
-    this.foundations = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.06, 1), new THREE.MeshLambertMaterial({ color: 0xd8c08a }), CAP);
+    this.foundations = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.06, 1), withFog(new THREE.MeshLambertMaterial({ color: 0xd8c08a })), CAP);
     this.foundations.count = 0;
     this.foundations.frustumCulled = false;
     this.group.add(this.foundations);
@@ -92,7 +93,8 @@ export class BuildingRenderer {
     return (t.heightAt(tx, ty) + t.heightAt(tx + w, ty) + t.heightAt(tx, ty + h) + t.heightAt(tx + w, ty + h) + t.heightAt(tx + w / 2, ty + h / 2)) / 5;
   }
 
-  update(sim: Sim, selected: number): void {
+  /** explored：該格探索過才畫敵方建築（迷霧） */
+  update(sim: Sim, selected: number, myPlayer: number, explored: (tx: number, ty: number) => boolean): void {
     const bs = sim.buildings;
     const counts = new Int32Array(this.types.length);
     let crops = 0;
@@ -102,6 +104,7 @@ export class BuildingRenderer {
       if (!bs.alive[b]) continue;
       const bt = bs.btype[b];
       const def = BUILDING_DEFS[bt];
+      if (bs.owner[b] !== myPlayer && !explored(bs.tx[b] + (def.w >> 1), bs.ty[b] + (def.h >> 1))) continue;
       const cx = bs.tx[b] + def.w / 2;
       const cz = bs.ty[b] + def.h / 2;
       const y = this.groundY(bs.tx[b], bs.ty[b], def.w, def.h);
@@ -170,6 +173,31 @@ export class BuildingRenderer {
     this.ghostGrid.visible = true;
     this.ghostGrid.position.set(tx + def.w / 2, y + 0.15, ty + def.h / 2);
     this.ghostGrid.scale.set(def.w, 1, def.h);
+  }
+
+  private lineMesh: THREE.InstancedMesh | null = null;
+
+  /** 牆拉線預覽：每格一個半透明方塊（綠＝可蓋、紅＝不可蓋） */
+  setLineGhost(tiles: [number, number, boolean][]): void {
+    if (!this.lineMesh) {
+      this.lineMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45, depthWrite: false }), 128);
+      this.lineMesh.frustumCulled = false;
+      this.lineMesh.renderOrder = 6;
+      this.lineMesh.setColorAt(0, new THREE.Color());
+      this.group.add(this.lineMesh);
+    }
+    const m = this.lineMesh;
+    const c = new THREE.Color();
+    const n = Math.min(128, tiles.length);
+    for (let i = 0; i < n; i++) {
+      const [x, y, ok] = tiles[i];
+      this.m.makeTranslation(x + 0.5, this.terrain.heightAt(x + 0.5, y + 0.5) + 0.45, y + 0.5);
+      m.setMatrixAt(i, this.m);
+      m.setColorAt(i, c.setHex(ok ? 0x7dff8a : 0xff5a4a));
+    }
+    m.count = n;
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
 
   heightOf(btype: number): number {

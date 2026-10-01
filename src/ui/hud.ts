@@ -201,10 +201,10 @@ export class Hud {
       sig += `place${g.placing.btype}${g.placing.valid}`;
       if (sig === this.selSig) return;
       html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div><b>放置${def.name}</b><div class="sub">${g.placing.valid ? (g.layoutMode === 'pc' ? '左鍵放置 · Shift 連續放 · 右鍵取消' : '點地面移動位置，再按「蓋這裡」') : '這裡不能蓋'}</div></div></div>`;
-    } else if (g.rallyMode) {
-      sig += 'rally';
+    } else if (g.rallyMode || g.attackMoveMode || g.patrolMode) {
+      sig += `mode${g.rallyMode}${g.attackMoveMode}${g.patrolMode}`;
       if (sig === this.selSig) return;
-      html = '<div class="hint">點地面或資源設定集結點</div>';
+      html = `<div class="hint">${g.rallyMode ? '點地面或資源設定集結點' : g.attackMoveMode ? '⚔ 點地面：攻擊移動（沿路遇敵就打）' : '🔄 點地面：巡邏終點'}</div>`;
     } else if (g.selected.size) {
       const counts = new Map<number, number>();
       let owner = -1;
@@ -301,6 +301,16 @@ export class Hud {
     return c;
   }
 
+  private pings: { x: number; z: number; t: number }[] = [];
+  private fogCanvas: HTMLCanvasElement | null = null;
+  private fogVersion = -1;
+
+  /** 小地圖上閃紅圈（遭到攻擊） */
+  ping(x: number, z: number): void {
+    if (this.pings.length > 8) this.pings.shift();
+    this.pings.push({ x, z, t: performance.now() });
+  }
+
   /** 樹被砍掉時，小地圖那一格改成草地色 */
   clearMiniTile(tx: number, ty: number): void {
     const ctx = this.miniTerrain.getContext('2d')!;
@@ -319,12 +329,13 @@ export class Hud {
     const sy = H / map.h;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.miniTerrain, 0, 0, W, H);
+    const me = g.myPlayer;
     const rs = sim.res;
     const rdot = Math.max(2, Math.round(W / 110));
     for (let r = 0; r < rs.high; r++) {
       if (!rs.alive[r]) continue;
       const col = MINI_RES[RESOURCE_KINDS[rs.kind[r]].id];
-      if (!col) continue;
+      if (!col || !g.isExplored(rs.tx[r], rs.ty[r])) continue;
       ctx.fillStyle = col;
       ctx.fillRect((rs.x[r] / 1024) * sx - rdot / 2, (rs.y[r] / 1024) * sy - rdot / 2, rdot, rdot);
     }
@@ -332,6 +343,7 @@ export class Hud {
     for (let b = 0; b < bs.high; b++) {
       if (!bs.alive[b]) continue;
       const def = BUILDING_DEFS[bs.btype[b]];
+      if (bs.owner[b] !== me && !g.isExplored(bs.tx[b], bs.ty[b])) continue;
       ctx.fillStyle = PLAYER_COLORS[bs.owner[b]];
       ctx.globalAlpha = bs.complete[b] ? 1 : 0.5;
       ctx.fillRect(bs.tx[b] * sx, bs.ty[b] * sy, Math.max(2, def.w * sx), Math.max(2, def.h * sy));
@@ -343,8 +355,29 @@ export class Hud {
     }
     const w = sim.world;
     const dot = Math.max(2, Math.round(W / 90));
+    // 迷霧：未探索全黑、已探索半暗
+    if (g.fog.enabled) {
+      if (!this.fogCanvas) {
+        this.fogCanvas = document.createElement('canvas');
+        this.fogCanvas.width = map.w;
+        this.fogCanvas.height = map.h;
+      }
+      if (this.fogVersion !== sim.vision.version) {
+        this.fogVersion = sim.vision.version;
+        const fctx = this.fogCanvas.getContext('2d')!;
+        const img = fctx.createImageData(map.w, map.h);
+        const vis = sim.vision.visible[me];
+        const exp = sim.vision.explored[me];
+        for (let i = 0; i < vis.length; i++) img.data[i * 4 + 3] = vis[i] ? 0 : exp[i] ? 110 : 235;
+        fctx.putImageData(img, 0, 0);
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(this.fogCanvas, 0, 0, W, H);
+      ctx.imageSmoothingEnabled = false;
+    }
     for (let id = 0; id < w.high; id++) {
-      if (!w.alive[id]) continue;
+      if (!w.alive[id] || w.state[id] === 3) continue;
+      if (w.owner[id] !== me && !g.units.seen[id]) continue;
       ctx.fillStyle = g.selected.has(id) ? '#ffffff' : PLAYER_COLORS[w.owner[id]];
       ctx.fillRect(g.units.wx[id] * sx - dot / 2, g.units.wz[id] * sy - dot / 2, dot, dot);
     }
@@ -356,6 +389,17 @@ export class Hud {
       [rect.right, rect.bottom],
       [rect.left, rect.bottom],
     ].map(([x, y]) => g.cam.groundAt(x, y));
+    // 遭到攻擊的紅圈
+    const now = performance.now();
+    this.pings = this.pings.filter((p) => now - p.t < 3000);
+    for (const p of this.pings) {
+      const k = (now - p.t) / 3000;
+      ctx.strokeStyle = `rgba(255,60,50,${1 - k})`;
+      ctx.lineWidth = Math.max(2, W / 80);
+      ctx.beginPath();
+      ctx.arc(p.x * sx, p.z * sy, (4 + k * 14) * (W / 128), 0, Math.PI * 2);
+      ctx.stroke();
+    }
     if (corners.every((p) => p)) {
       ctx.strokeStyle = 'rgba(255,255,255,0.9)';
       ctx.lineWidth = Math.max(1, W / 120);

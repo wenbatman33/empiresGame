@@ -27,14 +27,26 @@ export const BUILD_ICONS: Record<string, string> = {
   granary: '🏚️',
   barracks: '⚔️',
   town_hall: '🏯',
+  archery: '🎯',
+  stable: '🐎',
+  blacksmith: '⚒️',
+  tower: '🗼',
+  palisade: '🪵',
+  wall: '🧱',
 };
 export const UNIT_ICONS: Record<string, string> = {
   villager: '👷',
   swordsman: '🛡️',
   spearman: '🔱',
   archer: '🏹',
+  scout: '🐴',
+  light_cav: '🐎',
+  heavy_cav: '🏇',
+  horse_archer: '🎠',
 };
-const BUILD_ORDER = ['house', 'farm', 'lumber_camp', 'mine_camp', 'granary', 'barracks', 'town_hall'];
+/** 民夫建造選單：第一頁經濟、第二頁軍事與防禦 */
+const BUILD_ORDER = ['house', 'farm', 'lumber_camp', 'mine_camp', 'granary', 'barracks', 'archery', 'stable', 'blacksmith', 'tower', 'palisade', 'wall', 'town_hall'];
+const STANCE_NAMES = ['進攻', '防守', '堅守', '不還擊'];
 
 export function costText(c: Cost): string {
   return c
@@ -66,6 +78,10 @@ export class CommandCard {
       out.push({ id: 'cancel', icon: '✕', label: '取消', tip: '取消設定集結點', enabled: true, action: () => (g.rallyMode = false) });
       return out;
     }
+    if (g.attackMoveMode || g.patrolMode) {
+      out.push({ id: 'cancel', icon: '✕', label: '取消', tip: '取消', enabled: true, action: () => (g.attackMoveMode = g.patrolMode = false) });
+      return out;
+    }
     if (own.length) {
       const workers = own.some((id) => UNIT_DEFS[w.utype[id]].worker);
       if (workers) {
@@ -83,6 +99,14 @@ export class CommandCard {
             action: () => g.startPlacing(bt),
           });
         }
+      }
+      const army = own.some((id) => !UNIT_DEFS[w.utype[id]].worker);
+      if (army) {
+        out.push({ id: 'amove', icon: '⚔️', label: '攻擊移動', tip: '攻擊移動：點地面，沿路遇敵就打', enabled: true, active: g.attackMoveMode, action: () => (g.attackMoveMode = !g.attackMoveMode) });
+        const st = w.stance[own.find((id) => !UNIT_DEFS[w.utype[id]].worker)!];
+        out.push({ id: 'stance', icon: ['🔥', '🛡️', '🚩', '🕊️'][st], label: STANCE_NAMES[st], tip: '切換姿態：進攻（追擊）→ 防守（追 8 格返回）→ 堅守（不移動）→ 不還擊', enabled: true, action: () => g.cycleStance() });
+        out.push({ id: 'spread', icon: g.spread ? '⁘' : '▦', label: g.spread ? '散開' : '方陣', tip: '陣型：方陣（預設）／散開（間距加倍，防範圍傷害）', enabled: true, active: g.spread, action: () => (g.spread = !g.spread) });
+        out.push({ id: 'patrol', icon: '🔄', label: '巡邏', tip: '巡邏：點地面，在目前位置與該點之間來回，遇敵就打', enabled: true, active: g.patrolMode, action: () => (g.patrolMode = !g.patrolMode) });
       }
       out.push({ id: 'stop', icon: '✋', label: '停止', tip: '停止目前的動作', enabled: true, action: () => g.stopSelected() });
       return out;

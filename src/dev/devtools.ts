@@ -147,6 +147,8 @@ export class DevTools {
     f.add({ go: () => g.selectArmy() }, 'go').name('選取我方全軍');
     f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'res' }) }, 'go').name('💰 我方資源各 ＋1000');
     f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'build' }) }, 'go').name('⚡ 我方工地瞬間完工');
+    f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'age' }) }, 'go').name('⏫ 我方直接升一個時代');
+    f.add(g.fog, 'enabled').name('戰爭迷霧（關掉＝全圖視野，只影響畫面）');
     f.add({ on: g.bots.length > 0 }, 'on').name('敵方經濟 AI').onChange((on: boolean) => {
       g.bots.length = 0;
       if (on) g.bots.push(new EconomyBot(g.sim, 1));

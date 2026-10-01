@@ -622,6 +622,7 @@ export class EconomySystem {
         const pl = sim.players[c.player];
         if (!pl) return;
         if (c.kind === 'res') for (let k = 0; k < 4; k++) pl.res[k] += 1000;
+        else if (c.kind === 'age') pl.age = Math.min(4, pl.age + 1);
         else
           for (let b = 0; b < bs.high; b++) {
             if (!bs.alive[b] || bs.owner[b] !== c.player || bs.complete[b]) continue;

@@ -2,16 +2,18 @@
 // 規則：只接受指令改變世界；每 tick 固定步驟；同種子 ＋ 同指令 → 同結果
 import type { Command, CommandInput } from './core/commands';
 import { BUILDING_DEFS, BUILDING_INDEX, ECONOMY, RESOURCE_KINDS, RK, UNIT_DEFS, UNIT_INDEX } from './core/defs';
-import { Buildings, Player, Resources } from './core/entities';
+import { Buildings, Player, Projectiles, Resources } from './core/entities';
 import { FX_SHIFT, ONE, isqrt, tileCenter, toFx } from './core/fixed';
 import { Hasher } from './core/hash';
 import { Rng } from './core/rng';
-import { NAV, S, TASK, World } from './core/world';
+import { NAV, ORDER, S, TASK, World } from './core/world';
 import { generateCentralPlains } from './map/generator';
 import { PASS_BLOCKED, T, basePass, type MapGrid } from './map/grid';
+import { CombatSystem } from './systems/combat';
 import { EconomySystem } from './systems/economy';
 import { MovementSystem } from './systems/movement';
 import { Pathfinder, type FlowField } from './systems/pathfinding';
+import { VisionSystem } from './systems/vision';
 
 export interface SimOptions {
   seed: number;
@@ -28,7 +30,9 @@ export type SimEvent =
   | { t: 'resGone'; id: number; kind: number; tx: number; ty: number }
   | { t: 'bPlaced'; id: number }
   | { t: 'bComplete'; id: number }
-  | { t: 'bRemoved'; id: number; btype: number; tx: number; ty: number; owner: number };
+  | { t: 'bRemoved'; id: number; btype: number; tx: number; ty: number; owner: number }
+  | { t: 'bDestroyed'; id: number; btype: number; tx: number; ty: number; w: number; h: number }
+  | { t: 'died'; id: number; player: number; utype: number };
 
 interface FlowEntry {
   field: FlowField;
@@ -46,6 +50,7 @@ export class Sim {
   readonly world = new World();
   readonly buildings = new Buildings();
   readonly res = new Resources();
+  readonly projectiles = new Projectiles();
   readonly players: Player[] = [];
   readonly rng: Rng;
   readonly pf: Pathfinder;
@@ -56,6 +61,8 @@ export class Sim {
   private readonly animals: number[] = [];
   private readonly movement: MovementSystem;
   readonly economy: EconomySystem;
+  readonly combat: CombatSystem;
+  readonly vision: VisionSystem;
   private readonly flows = new Map<number, FlowEntry>();
   private readonly flowByKey = new Map<number, number>();
   private nextFlow = 1;
@@ -79,8 +86,10 @@ export class Sim {
     this.bldTile = new Int32Array(this.map.w * this.map.h).fill(-1);
     this.movement = new MovementSystem(this);
     this.economy = new EconomySystem(this);
+    this.combat = new CombatSystem(this);
     const nPlayers = Math.max(2, this.map.starts.length);
     for (let p = 0; p < nPlayers; p++) this.players.push(new Player(ECONOMY.start));
+    this.vision = new VisionSystem(this);
     this.createResources();
     if ((opts.start ?? (opts.map ? 'empty' : 'standard')) === 'standard') this.standardStart();
   }
@@ -109,8 +118,10 @@ export class Sim {
     this.map.starts.forEach((s, p) => {
       const b = this.placeBuilding(th, p, s.x - 2, s.y - 2, true);
       for (let k = 0; k < ECONOMY.startVillagers; k++) this.spawnFromBuilding(b, UNIT_INDEX.villager);
+      this.spawnFromBuilding(b, UNIT_INDEX.scout);
     });
     this.economy.step();
+    this.vision.step();
   }
 
   /** 排程指令：預設在下一次 step 執行 */
@@ -133,8 +144,18 @@ export class Sim {
       }
     }
     this.economy.step();
+    this.combat.step();
     this.movement.step();
+    this.vision.step();
     this.tick++;
+  }
+
+  /** 某點的地面高度（高度單位：1 格 = 64），高低差修正用 */
+  heightAt(x: number, y: number): number {
+    const m = this.map;
+    const tx = Math.max(0, Math.min(m.w, (x + (ONE >> 1)) >> FX_SHIFT));
+    const ty = Math.max(0, Math.min(m.h, (y + (ONE >> 1)) >> FX_SHIFT));
+    return m.heights[ty * (m.w + 1) + tx];
   }
 
   /** 世界狀態雜湊（確定性測試、未來多人不同步偵測） */
@@ -153,6 +174,7 @@ export class Sim {
     const rs = this.res;
     for (let r = 0; r < rs.high; r++) if (rs.alive[r]) h.add(r).add(rs.amount[r]);
     for (const p of this.players) h.addArray(p.res).add(p.pop).add(p.popCap);
+    h.add(this.projectiles.count);
     h.addArray(this.rng.getState());
     return h.value();
   }
@@ -165,14 +187,31 @@ export class Sim {
         this.cmdSpawn(c.player, c.unit, c.x, c.y, c.count);
         break;
       case 'move':
-        for (const id of this.ownedIds(c.player, c.ids)) this.economy.clearTask(id);
-        this.cmdMove(c.player, c.ids, c.x, c.y);
+      case 'attackMove':
+      case 'patrol':
+        for (const id of this.ownedIds(c.player, c.ids)) {
+          this.economy.clearTask(id);
+          this.combat.clearTarget(id);
+          // 巡邏的另一端 ＝ 出發點
+          this.world.homeX[id] = this.world.x[id];
+          this.world.homeY[id] = this.world.y[id];
+        }
+        this.cmdMove(c.player, c.ids, c.x, c.y, c.t === 'move' ? ORDER.Move : c.t === 'patrol' ? ORDER.Patrol : ORDER.AttackMove, 'spread' in c && !!c.spread);
         break;
       case 'stop':
         for (const id of this.ownedIds(c.player, c.ids)) {
           this.economy.clearTask(id);
+          this.combat.clearTarget(id);
+          this.world.order[id] = ORDER.None;
           this.arrive(id);
         }
+        break;
+      case 'attack':
+      case 'stance':
+        this.combat.apply(c);
+        break;
+      case 'buildLine':
+        this.cmdBuildLine(c.player, c.ids, c.btype, c.x0, c.y0, c.x1, c.y1);
         break;
       case 'clear':
         for (let id = 0; id < this.world.high; id++) if (this.world.alive[id]) this.releaseNav(id);
@@ -180,7 +219,47 @@ export class Sim {
         this.groups.clear();
         break;
       default:
+        // 派去工作的單位不再打仗
+        if ('ids' in c) {
+          for (const id of this.ownedIds(c.player, c.ids)) {
+            this.combat.clearTarget(id);
+            this.world.order[id] = ORDER.None;
+          }
+        }
         this.economy.apply(c);
+    }
+  }
+
+  /** 牆：沿直線（4 連通，不留斜角縫）放一排地基，付得起幾格就放幾格 */
+  private cmdBuildLine(player: number, ids: number[], btype: number, x0: number, y0: number, x1: number, y1: number): void {
+    const def = BUILDING_DEFS[btype];
+    const pl = this.players[player];
+    if (!def || !def.wall || !pl || def.age > pl.age) return;
+    const workers = this.ownedIds(player, ids).filter((id) => UNIT_DEFS[this.world.utype[id]].worker);
+    if (!workers.length) return;
+    const tiles: [number, number][] = [];
+    let x = x0;
+    let y = y0;
+    tiles.push([x, y]);
+    for (let k = 0; k < 64 && (x !== x1 || y !== y1); k++) {
+      const dx = x1 - x;
+      const dy = y1 - y;
+      if (Math.abs(dx) >= Math.abs(dy)) x += Math.sign(dx);
+      else y += Math.sign(dy);
+      tiles.push([x, y]);
+    }
+    let first = -1;
+    for (const [tx, ty] of tiles) {
+      if (!pl.canAfford(def.cost) || !this.canPlace(btype, tx, ty)) continue;
+      pl.pay(def.cost);
+      const b = this.placeBuilding(btype, player, tx, ty, false);
+      if (first < 0) first = b;
+    }
+    if (first < 0) return;
+    for (const id of workers) {
+      this.combat.clearTarget(id);
+      this.world.order[id] = ORDER.None;
+      this.economy.setTask(id, TASK.Build, first);
     }
   }
 
@@ -213,7 +292,7 @@ export class Sim {
     }
   }
 
-  private cmdMove(player: number, rawIds: number[], x: number, y: number): void {
+  private cmdMove(player: number, rawIds: number[], x: number, y: number, order: number, spread: boolean): void {
     const w = this.world;
     const ids = this.ownedIds(player, rawIds);
     if (!ids.length) return;
@@ -225,7 +304,7 @@ export class Sim {
     const gy = exact ? y : tileCenter(gty);
     const group = this.nextGroup++;
     this.groups.set(group, ids.length);
-    const slots = this.formationSlots(ids, gx, gy);
+    const slots = this.formationSlots(ids, gx, gy, spread);
     const flowId = ids.length >= FLOW_MIN_GROUP ? this.acquireFlow(gtx, gty) : -1;
     for (let k = 0; k < ids.length; k++) {
       const id = ids[k];
@@ -234,6 +313,9 @@ export class Sim {
       const sy = slots[k * 2 + 1];
       w.goalX[id] = sx;
       w.goalY[id] = sy;
+      w.destX[id] = sx;
+      w.destY[id] = sy;
+      w.order[id] = order;
       w.group[id] = group;
       w.stuck[id] = 0;
       this.setState(id, S.Move);
@@ -256,7 +338,7 @@ export class Sim {
    * 陣型站位：以移動方向為前方排成方陣
    * 離目標最近的單位排前排，同一排依左右位置排序，減少交叉
    */
-  private formationSlots(ids: number[], gx: number, gy: number): Int32Array {
+  private formationSlots(ids: number[], gx: number, gy: number, spread = false): Int32Array {
     const w = this.world;
     const n = ids.length;
     const out = new Int32Array(n * 2);
@@ -287,7 +369,8 @@ export class Sim {
     }
     const lx = -fy;
     const ly = fx;
-    const spacing = maxR * 2 + (ONE >> 3);
+    // 散開陣型：間距加倍（防範圍傷害，docs/03 §4）
+    const spacing = (maxR * 2 + (ONE >> 3)) * (spread ? 2 : 1);
     const cols = isqrt(n - 1) + 1;
     const rows = Math.ceil(n / cols);
     const order = ids.map((id, k) => ({

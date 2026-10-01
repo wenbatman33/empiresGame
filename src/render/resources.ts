@@ -4,6 +4,7 @@ import { RESOURCE_MODELS } from '../models/resources';
 import { RESOURCE_KINDS, RK } from '../sim/core/defs';
 import type { Sim } from '../sim/sim';
 import type { Terrain } from './terrain';
+import { withFog } from './fog';
 
 export class ResourceRenderer {
   readonly group = new THREE.Group();
@@ -16,7 +17,7 @@ export class ResourceRenderer {
   private readonly s = new THREE.Vector3();
 
   constructor(private sim: Sim, private terrain: Terrain) {
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    const mat = withFog(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
     const counts = new Int32Array(RESOURCE_KINDS.length);
     for (let r = 0; r < sim.res.high; r++) if (sim.res.alive[r]) counts[sim.res.kind[r]]++;
     RESOURCE_KINDS.forEach((k, i) => {
