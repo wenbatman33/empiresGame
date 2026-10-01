@@ -2,7 +2,7 @@
 // 另含建造放置的預覽（綠＝可蓋、紅＝不可蓋）與選取框
 import * as THREE from 'three';
 import { PLAYER_COLORS } from '../config';
-import { BUILDING_HEIGHT, BUILDING_MODELS, farmCrops } from '../models/buildings';
+import { BUILDING_HEIGHT, buildingModel, farmCrops } from '../models/buildings';
 import { makeTeamMaterial } from '../models/geo';
 import { BUILDING_DEFS } from '../sim/core/defs';
 import type { Sim } from '../sim/sim';
@@ -18,7 +18,9 @@ interface TypeMesh {
 
 export class BuildingRenderer {
   readonly group = new THREE.Group();
-  private types: TypeMesh[] = [];
+  /** [建築種類][時代-1]，用到才建立 */
+  private types: (TypeMesh | null)[][] = [];
+  private mat: THREE.MeshLambertMaterial;
   private crops: THREE.InstancedMesh;
   private foundations: THREE.InstancedMesh;
   private ghost: THREE.Mesh | null = null;
@@ -31,26 +33,10 @@ export class BuildingRenderer {
   private readonly q = new THREE.Quaternion();
   private readonly v = new THREE.Vector3();
   private readonly s = new THREE.Vector3();
-  private readonly geos: THREE.BufferGeometry[] = [];
 
   constructor(private terrain: Terrain) {
-    const mat = withFog(makeTeamMaterial());
-    for (const def of BUILDING_DEFS) {
-      const geo = (BUILDING_MODELS[def.id] ?? BUILDING_MODELS.house)();
-      this.geos.push(geo);
-      const team = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3);
-      team.setUsage(THREE.DynamicDrawUsage);
-      const g = geo.clone();
-      g.setAttribute('aTeam', team);
-      const mesh = new THREE.InstancedMesh(g, mat, CAP);
-      mesh.count = 0;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.frustumCulled = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.group.add(mesh);
-      this.types.push({ mesh, team });
-    }
+    this.mat = withFog(makeTeamMaterial());
+    for (let i = 0; i < BUILDING_DEFS.length; i++) this.types.push([null, null, null, null]);
     this.crops = new THREE.InstancedMesh(farmCrops(), withFog(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })), CAP);
     this.crops.count = 0;
     this.crops.castShadow = true;
@@ -94,9 +80,29 @@ export class BuildingRenderer {
   }
 
   /** explored：該格探索過才畫敵方建築（迷霧） */
+  private typeMesh(bt: number, age: number): TypeMesh {
+    const a = Math.max(1, Math.min(4, age)) - 1;
+    let tm = this.types[bt][a];
+    if (tm) return tm;
+    const geo = buildingModel(BUILDING_DEFS[bt].id, a + 1);
+    const team = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3);
+    team.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aTeam', team);
+    const mesh = new THREE.InstancedMesh(geo, this.mat, CAP);
+    mesh.count = 0;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.group.add(mesh);
+    tm = { mesh, team };
+    this.types[bt][a] = tm;
+    return tm;
+  }
+
   update(sim: Sim, selected: number, myPlayer: number, explored: (tx: number, ty: number) => boolean): void {
     const bs = sim.buildings;
-    const counts = new Int32Array(this.types.length);
+    const counts = new Map<TypeMesh, number>();
     let crops = 0;
     let found = 0;
     this.selFrame.visible = false;
@@ -110,8 +116,9 @@ export class BuildingRenderer {
       const y = this.groundY(bs.tx[b], bs.ty[b], def.w, def.h);
       const need = def.buildTicks * 3;
       const p = bs.complete[b] ? 1 : bs.progress[b] / need;
-      const tm = this.types[bt];
-      const n = counts[bt]++;
+      const tm = this.typeMesh(bt, sim.players[bs.owner[b]]?.age ?? 1);
+      const n = counts.get(tm) ?? 0;
+      counts.set(tm, n + 1);
       const sy = bs.complete[b] ? 1 : 0.08 + 0.92 * p;
       this.v.set(cx, y, cz);
       this.s.set(1, sy, 1);
@@ -137,11 +144,13 @@ export class BuildingRenderer {
         this.selFrame.scale.set(def.w + 0.3, 1, def.h + 0.3);
       }
     }
-    for (let t = 0; t < this.types.length; t++) {
-      const tm = this.types[t];
-      tm.mesh.count = counts[t];
-      tm.mesh.instanceMatrix.needsUpdate = true;
-      tm.team.needsUpdate = true;
+    for (const row of this.types) {
+      for (const tm of row) {
+        if (!tm) continue;
+        tm.mesh.count = counts.get(tm) ?? 0;
+        tm.mesh.instanceMatrix.needsUpdate = true;
+        tm.team.needsUpdate = true;
+      }
     }
     this.crops.count = crops;
     this.crops.instanceMatrix.needsUpdate = true;
@@ -150,7 +159,7 @@ export class BuildingRenderer {
   }
 
   /** 放置預覽；btype < 0 隱藏 */
-  setGhost(btype: number, tx: number, ty: number, valid: boolean): void {
+  setGhost(btype: number, tx: number, ty: number, valid: boolean, age = 1): void {
     if (btype < 0) {
       if (this.ghost) this.ghost.visible = false;
       this.ghostGrid.visible = false;
@@ -158,7 +167,7 @@ export class BuildingRenderer {
     }
     if (btype !== this.ghostType) {
       if (this.ghost) this.group.remove(this.ghost);
-      this.ghost = new THREE.Mesh(this.geos[btype], this.ghostMat);
+      this.ghost = new THREE.Mesh(buildingModel(BUILDING_DEFS[btype].id, age), this.ghostMat);
       this.ghost.renderOrder = 6;
       this.group.add(this.ghost);
       this.ghostType = btype;

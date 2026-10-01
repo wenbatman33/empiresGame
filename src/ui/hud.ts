@@ -1,7 +1,7 @@
 // HUD：資源列、小地圖、選取面板、左側按鈕、指令卡、放置確認列、框選框、提示訊息
 // 版面數值來自 layout.ts，DEV 工具可直接拖曳
 import { PLAYER_COLORS } from '../config';
-import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, UNIT_DEFS } from '../sim/core/defs';
+import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, TECH_DEFS, UNIT_DEFS } from '../sim/core/defs';
 import { S, TASK } from '../sim/core/world';
 import type { Game } from '../game';
 import { BUILD_ICONS, CommandCard, UNIT_ICONS } from './commandCard';
@@ -239,7 +239,9 @@ export class Hud {
       const q = bs.queue[b];
       const qp = q.length ? Math.floor((bs.qProgress[b] / UNIT_DEFS[q[0]].trainTicks) * 100) : 0;
       const pl = sim.players[bs.owner[b]];
-      sig += `b${b}|${bs.hp[b]}|${prog}|${q.join(',')}|${qp}|${bs.food[b]}|${pl.housed}`;
+      const rt = bs.research[b];
+      const rp = rt >= 0 ? Math.floor((bs.rProgress[b] / TECH_DEFS[rt].ticks) * 100) : 0;
+      sig += `b${b}|${bs.hp[b]}|${prog}|${q.join(',')}|${qp}|${bs.food[b]}|${pl.housed}|${rt}|${rp}`;
       if (sig === this.selSig) return;
       let extra = '';
       if (!bs.complete[b]) extra = `<div class="sub">建造中 ${prog}%</div>`;
@@ -250,7 +252,8 @@ export class Hud {
             .map((ut, i) => `<button class="qi" data-i="${i}" title="點一下取消">${UNIT_ICONS[UNIT_DEFS[ut].id] ?? '👤'}${i === 0 ? `<i style="width:${qp}%"></i>` : ''}</button>`)
             .join('')}${pl.housed && bs.owner[b] === g.myPlayer ? '<span class="warn">人口已滿</span>' : ''}</div>`
         : '';
-      html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${bs.hp[b]}/${def.hp}</span></div>${extra}${queue}</div></div>`;
+      const research = rt >= 0 ? `<div class="research"><span>📘 研究「${TECH_DEFS[rt].name}」</span><span class="hp prog"><i style="width:${rp}%"></i></span><button class="qi cancel-r" title="取消研究（退費）">✕</button></div>` : '';
+      html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${bs.hp[b]}/${def.hp}</span></div>${extra}${research}${queue}</div></div>`;
     } else if (g.selResource >= 0 && rs.alive[g.selResource]) {
       const r = g.selResource;
       const kd = RESOURCE_KINDS[rs.kind[r]];
@@ -273,7 +276,11 @@ export class Hud {
         g.keepOnlyType(Number(b.dataset.type));
       }),
     );
-    this.selBody.querySelectorAll<HTMLButtonElement>('.qi').forEach((b) =>
+    this.selBody.querySelector<HTMLButtonElement>('.cancel-r')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      g.sim.issue({ t: 'cancelResearch', player: g.myPlayer, building: g.selBuilding });
+    });
+    this.selBody.querySelectorAll<HTMLButtonElement>('.qi:not(.cancel-r)').forEach((b) =>
       b.addEventListener('click', (e) => {
         e.stopPropagation();
         g.cancelTrain(g.selBuilding, Number(b.dataset.i));

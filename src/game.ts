@@ -1,6 +1,9 @@
 // 遊戲主體：串起模擬層、渲染、輸入、HUD；固定 tick 模擬 ＋ 每幀內插渲染（docs/07 §3）
 import * as THREE from 'three';
-import { EconomyBot } from './ai/economyBot';
+import { AI_PARAMS, AIPlayer } from './ai/ai';
+import { sfx } from './audio/sfx';
+import { AUTO_KEY, SAVE_KEY, writeSave, type SaveData } from './save/save';
+import { showAgeBanner, showGameOver, showLoading, showPauseMenu, setupQuery, type GameSetup } from './ui/menus';
 import { CAMERA, type Quality } from './config';
 import { Controls } from './input/controls';
 import { RtsCamera } from './input/camera';
@@ -13,7 +16,8 @@ import { Stage } from './render/stage';
 import { Terrain } from './render/terrain';
 import { Trees } from './render/trees';
 import { UnitRenderer } from './render/units';
-import { BUILDING_DEFS, RESOURCE_KINDS, RK, UNIT_DEFS, UNIT_INDEX } from './sim/core/defs';
+import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, RK, TECH_DEFS, UNIT_DEFS, UNIT_INDEX } from './sim/core/defs';
+import type { Command } from './sim/core/commands';
 import { ONE, TICK_MS } from './sim/core/fixed';
 import { S, TK } from './sim/core/world';
 import { Sim } from './sim/sim';
@@ -21,7 +25,7 @@ import { Hud } from './ui/hud';
 import { detectLayout, type LayoutMode } from './ui/layout';
 
 export interface GameOptions {
-  seed: number;
+  setup: GameSetup;
   quality: Quality;
   layout?: LayoutMode;
 }
@@ -67,8 +71,15 @@ export class Game {
   layoutLocked = false;
   speed = 1;
   paused = false;
-  /** 電腦玩家（M1：敵方先只有經濟機器人） */
-  readonly bots: EconomyBot[] = [];
+  /** 電腦玩家 */
+  readonly ais: AIPlayer[] = [];
+  readonly setup: GameSetup;
+  /** 讀檔重播中：不跑 AI、不自動存檔 */
+  replaying = false;
+  replayCheck: { tick: number; hash: number } | null = null;
+  private menuClose: (() => void) | null = null;
+  private lastAutosave = 0;
+  private over = false;
   /** 動畫時間（秒，跟著遊戲速度與暫停） */
   time = 0;
   readonly stats = { fps: 0, frameMs: 0, simMs: 0, ticks: 0 };
@@ -87,7 +98,10 @@ export class Game {
 
   constructor(container: HTMLElement, opts: GameOptions) {
     this.layoutMode = opts.layout ?? detectLayout();
-    this.sim = new Sim({ seed: opts.seed, mapSize: 128 });
+    this.setup = opts.setup;
+    const st = opts.setup;
+    this.sim = new Sim({ seed: st.seed, mapSize: st.map, bonusRes: st.res, popLimit: st.pop, handicap: [1000, AI_PARAMS[st.ai].handicap] });
+    this.speed = st.speed;
     this.stage = new Stage(container, opts.quality);
     this.terrain = new Terrain(this.sim.map);
     this.trees = new Trees(this.sim.map, this.terrain);
@@ -103,8 +117,10 @@ export class Game {
     this.cam = new RtsCamera(this.stage.camera, this.terrain, this.sim.map.w, this.sim.map.h, startDist);
     this.controls = new Controls(this, this.stage.renderer.domElement);
     this.hud = new Hud(container, this);
-    this.bots.push(new EconomyBot(this.sim, 1));
+    this.ais.push(new AIPlayer(this.sim, 1, st.ai));
+    this.fog.enabled = !st.reveal;
     this.goHome();
+    this.addMenuButton(container);
     window.addEventListener('resize', () => {
       const next = detectLayout();
       if (next !== this.layoutMode && !this.layoutLocked) this.setLayout(next);
@@ -161,7 +177,7 @@ export class Game {
       this.acc += dt * 1000 * this.speed;
       while (this.acc >= TICK_MS && ticks < 16) {
         const s0 = performance.now();
-        for (const b of this.bots) b.tick();
+        if (!this.replaying) for (const a of this.ais) a.tick();
         this.sim.step();
         simMs += performance.now() - s0;
         this.acc -= TICK_MS;
@@ -174,6 +190,10 @@ export class Game {
       this.time += dt * this.speed;
     }
     this.processEvents();
+    if (!this.replaying && !this.over && this.sim.tick - this.lastAutosave >= 600) {
+      this.lastAutosave = this.sim.tick;
+      writeSave(AUTO_KEY, this.saveData());
+    }
     const alpha = this.paused ? 1 : Math.min(1, this.acc / TICK_MS);
 
     this.controls.update();
@@ -196,10 +216,11 @@ export class Game {
     });
     this.buildingsR.update(this.sim, this.selBuilding, this.myPlayer, exp);
     this.projectilesR.update(this.sim, alpha, vis);
+    this.battleSounds();
     this.resourcesR.update(dt);
     if (this.placing) {
       const pl = this.placing;
-      this.buildingsR.setGhost(pl.btype, pl.tx, pl.ty, pl.valid);
+      this.buildingsR.setGhost(pl.btype, pl.tx, pl.ty, pl.valid, this.sim.players[this.myPlayer].age);
       this.buildingsR.setLineGhost(pl.lineStart ? this.lineTiles(pl.lineStart[0], pl.lineStart[1], pl.tx, pl.ty).map(([x, y]) => [x, y, this.sim.canPlace(pl.btype, x, y)]) : []);
     } else {
       this.buildingsR.setGhost(-1, 0, 0, false);
@@ -233,6 +254,23 @@ export class Game {
     const ev = this.sim.events;
     for (const e of ev) {
       if (e.t === 'died' && e.player === this.myPlayer) this.alert(this.sim.world.x[e.id] / ONE, this.sim.world.y[e.id] / ONE);
+      if (e.t === 'died' && this.units.seen[e.id]) sfx.play('die', 0.15);
+      if (e.t === 'trained' && e.player === this.myPlayer && !this.replaying) sfx.play('train', 0.3);
+      if (e.t === 'research' && !this.replaying) {
+        const t = TECH_DEFS[e.tech];
+        if (e.player === this.myPlayer) {
+          if (t.ageUp) {
+            showAgeBanner(document.body, t.name, ['', '', '解鎖弓營、馬廄、鐵匠鋪、箭塔、石牆', '解鎖工坊、衝車、重騎與兵種升級', '解鎖霹靂車、鐵騎與最終科技'][this.sim.players[this.myPlayer].age] ?? '');
+            sfx.play('age');
+          } else {
+            this.hud.toast(`研究完成：${t.name}`);
+            sfx.play('done');
+          }
+        } else if (t.ageUp && this.sim.players[e.player]) {
+          this.hud.toast(`⚠ 敵軍進入「${t.name}」`, 2500);
+        }
+      }
+      if (e.t === 'gameOver' && !this.over) this.gameOver(e.winner === this.myPlayer);
       if (e.t === 'bDestroyed') {
         if (this.selBuilding === e.id) this.selBuilding = -1;
         this.resourcesR.dirty();
@@ -243,8 +281,9 @@ export class Game {
           this.hud.clearMiniTile(e.tx, e.ty);
         }
         this.resourcesR.dirty();
-      } else if (e.t === 'bComplete' && this.sim.buildings.owner[e.id] === this.myPlayer && this.sim.tick > 1) {
+      } else if (e.t === 'bComplete' && this.sim.buildings.owner[e.id] === this.myPlayer && this.sim.tick > 1 && !this.replaying) {
         this.hud.toast(`${BUILDING_DEFS[this.sim.buildings.btype[e.id]].name}完工`);
+        sfx.play('done', 0.5);
       }
     }
     ev.length = 0;
@@ -259,6 +298,7 @@ export class Game {
     if (this.time - this.lastAlert < 10) return;
     this.lastAlert = this.time;
     this.hud.toast('⚠ 我軍遭到攻擊！（空白鍵跳過去）', 2500);
+    sfx.play('alert', 5);
     this.lastAlertPos = [x, z];
   }
 
@@ -266,6 +306,137 @@ export class Game {
 
   jumpToAlert(): void {
     if (this.lastAlertPos) this.cam.lookAt(this.lastAlertPos[0], this.lastAlertPos[1]);
+  }
+
+  /** 畫面附近有兵出手就播刀劍／箭聲（有冷卻，不會太吵） */
+  private battleSounds(): void {
+    if (this.replaying) return;
+    const w = this.sim.world;
+    const t = this.sim.tick - 1;
+    let melee = false;
+    let ranged = false;
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.lastHit[id] !== t || !this.units.seen[id]) continue;
+      if (UNIT_DEFS[w.utype[id]].rangeFx > 0) ranged = true;
+      else melee = true;
+      if (melee && ranged) break;
+    }
+    if (melee) sfx.play('hit', 0.12);
+    if (ranged) sfx.play('arrow', 0.2);
+  }
+
+  // ───────── 選單、存讀檔、結算 ─────────
+
+  private addMenuButton(container: HTMLElement): void {
+    const b = document.createElement('button');
+    b.id = 'menu-btn';
+    b.textContent = '☰';
+    b.title = '選單（Esc）';
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.openMenu();
+    });
+    container.appendChild(b);
+  }
+
+  private devQuery(prefix: string): string {
+    return new URLSearchParams(location.search).has('dev') ? `${prefix}dev=1` : '';
+  }
+
+  openMenu(): void {
+    if (this.menuClose) {
+      this.closeMenu();
+      return;
+    }
+    this.paused = true;
+    sfx.play('click');
+    this.menuClose = showPauseMenu(document.body, {
+      resume: () => this.closeMenu(),
+      save: () => {
+        this.hud.toast(writeSave(SAVE_KEY, this.saveData()) ? '已存檔' : '存檔失敗（瀏覽器不允許寫入）');
+        this.closeMenu();
+      },
+      load: () => {
+        location.href = `${location.pathname}?load=1${this.devQuery('&')}`;
+      },
+      sound: () => this.hud.toast(sfx.toggle() ? '音效：開' : '音效：關'),
+      quality: () => {
+        const order: Quality[] = ['low', 'medium', 'high'];
+        const next = order[(order.indexOf(this.stage.quality) + 1) % 3];
+        this.setQuality(next);
+        this.hud.toast(`畫質：${{ low: '低', medium: '中', high: '高' }[next]}`);
+      },
+      resign: () => {
+        if (!window.confirm('確定要投降嗎？')) return;
+        this.closeMenu();
+        this.sim.issue({ t: 'resign', player: this.myPlayer });
+      },
+      menu: () => {
+        location.href = `${location.pathname}${this.devQuery('?')}`;
+      },
+    });
+  }
+
+  closeMenu(): void {
+    this.menuClose?.();
+    this.menuClose = null;
+    this.paused = false;
+  }
+
+  get menuOpen(): boolean {
+    return this.menuClose !== null;
+  }
+
+  saveData(): SaveData {
+    return { v: 1, setup: this.setup, tick: this.sim.tick, history: this.sim.history, savedAt: new Date().toISOString() };
+  }
+
+  /** 讀檔：把指令紀錄重播到存檔時的 tick（分批跑，不卡畫面） */
+  async replay(history: Command[], tick: number): Promise<void> {
+    this.replaying = true;
+    for (const c of history) this.sim.issue(structuredClone(c), c.tick - this.sim.tick);
+    const ld = showLoading(document.body, '讀取戰局中…');
+    while (this.sim.tick < tick) {
+      const end = Math.min(tick, this.sim.tick + 400);
+      while (this.sim.tick < end) this.sim.step();
+      ld.set(`讀取戰局中… ${Math.floor((this.sim.tick / Math.max(1, tick)) * 100)}%`);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    this.sim.events.length = 0;
+    this.lastAutosave = this.sim.tick;
+    // 讀檔驗證用：重播結束當下的 tick 與狀態雜湊
+    this.replayCheck = { tick: this.sim.tick, hash: this.sim.hash() };
+    ld.close();
+    this.replaying = false;
+    this.goHome();
+  }
+
+  private gameOver(win: boolean): void {
+    this.over = true;
+    sfx.play(win ? 'win' : 'lose');
+    const me = this.sim.players[this.myPlayer];
+    const en = this.sim.players[1];
+    const ages = ['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'];
+    const sec = Math.floor(this.sim.tick / 10);
+    const rows: [string, string, string][] = [
+      ['時間', `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`, ''],
+      ['時代', ages[me.age], ages[en.age]],
+      ['訓練單位', String(me.stats.trained), String(en.stats.trained)],
+      ['擊殺', String(me.stats.kills), String(en.stats.kills)],
+      ['損失', String(me.stats.lost), String(en.stats.lost)],
+      ['摧毀建築', String(me.stats.razed), String(en.stats.razed)],
+      ['研究科技', String(me.stats.researched), String(en.stats.researched)],
+      ...me.gathered.map((v, k) => [`採集${RES_NAMES[k]}`, String(v), String(en.gathered[k])] as [string, string, string]),
+    ];
+    showGameOver(document.body, win, rows, {
+      again: () => {
+        location.href = `${location.pathname}${setupQuery({ ...this.setup, seed: (Math.random() * 1e9) | 0 })}`;
+      },
+      menu: () => {
+        location.href = `${location.pathname}${this.devQuery('?')}`;
+      },
+      watch: () => {},
+    });
   }
 
   // ───────── 點選 ─────────
@@ -381,6 +552,7 @@ export class Game {
     if (this.placing) return;
     const id = this.pickUnit(sx, sy, 18);
     const w = this.sim.world;
+    if (id >= 0) sfx.play('select');
     if (id >= 0) {
       if (additive && w.owner[id] === this.myPlayer) {
         this.selBuilding = -1;
@@ -627,6 +799,7 @@ export class Game {
   issueMove(x: number, z: number): void {
     const ids = this.ownSelected();
     if (!ids.length) return;
+    sfx.play('command');
     this.sim.issue({ t: 'move', player: this.myPlayer, ids, x: Math.round(x * ONE), y: Math.round(z * ONE), spread: this.spread });
     this.markers.ping(x, this.terrain.heightAt(x, z), z);
   }
@@ -655,6 +828,10 @@ export class Game {
     this.sim.issue({ t: 'rally', player: this.myPlayer, building: b, x: Math.round(p.x * ONE), y: Math.round(p.z * ONE), res: r });
     this.markers.ping(p.x, p.y, p.z, 0xffffff);
     this.hud.toast(r >= 0 ? '集結點：新民夫會直接去採集' : '已設定集結點');
+  }
+
+  research(b: number, tech: number): void {
+    this.sim.issue({ t: 'research', player: this.myPlayer, building: b, tech });
   }
 
   train(b: number, unit: number): void {
@@ -753,6 +930,7 @@ export class Game {
     }
     const ids = this.ownSelected().filter((id) => UNIT_DEFS[this.sim.world.utype[id]].worker);
     this.sim.issue({ t: 'build', player: this.myPlayer, ids, btype: pl.btype, tx: pl.tx, ty: pl.ty });
+    sfx.play('build');
     const def = BUILDING_DEFS[pl.btype];
     this.markers.ping(pl.tx + def.w / 2, this.terrain.heightAt(pl.tx + def.w / 2, pl.ty + def.h / 2), pl.ty + def.h / 2, 0xffe14a);
     if (keep && this.sim.players[this.myPlayer].canAfford([def.cost[0] * 2, def.cost[1] * 2, def.cost[2] * 2, def.cost[3] * 2])) {

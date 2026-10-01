@@ -1,7 +1,7 @@
 // 確定性模擬層入口（docs/07 §3）
 // 規則：只接受指令改變世界；每 tick 固定步驟；同種子 ＋ 同指令 → 同結果
 import type { Command, CommandInput } from './core/commands';
-import { BUILDING_DEFS, BUILDING_INDEX, ECONOMY, RESOURCE_KINDS, RK, UNIT_DEFS, UNIT_INDEX } from './core/defs';
+import { BUILDING_DEFS, BUILDING_INDEX, ECONOMY, RESOURCE_KINDS, RK, TECH_DEFS, UNIT_DEFS, UNIT_INDEX } from './core/defs';
 import { Buildings, Player, Projectiles, Resources } from './core/entities';
 import { FX_SHIFT, ONE, isqrt, tileCenter, toFx } from './core/fixed';
 import { Hasher } from './core/hash';
@@ -22,6 +22,12 @@ export interface SimOptions {
   map?: MapGrid;
   /** standard：每位玩家一座太守府 ＋ 民夫；empty：空地圖 */
   start?: 'standard' | 'empty';
+  /** 起始資源加成（充足 ＋500、豐厚 ＋2000） */
+  bonusRes?: number;
+  /** 每位玩家的採集倍率（千分比，AI 難度用） */
+  handicap?: number[];
+  /** 人口上限 */
+  popLimit?: number;
 }
 
 /** 給渲染與 UI 的事件（不影響模擬狀態，不算進雜湊） */
@@ -32,7 +38,10 @@ export type SimEvent =
   | { t: 'bComplete'; id: number }
   | { t: 'bRemoved'; id: number; btype: number; tx: number; ty: number; owner: number }
   | { t: 'bDestroyed'; id: number; btype: number; tx: number; ty: number; w: number; h: number }
-  | { t: 'died'; id: number; player: number; utype: number };
+  | { t: 'died'; id: number; player: number; utype: number }
+  | { t: 'research'; player: number; tech: number }
+  | { t: 'defeated'; player: number }
+  | { t: 'gameOver'; winner: number };
 
 interface FlowEntry {
   field: FlowField;
@@ -73,6 +82,9 @@ export class Sim {
   readonly history: Command[] = [];
   /** 渲染與 UI 讀完要自己清空 */
   readonly events: SimEvent[] = [];
+  /** 勝利者（-1 ＝ 還沒分出勝負） */
+  winner = -1;
+  popLimit: number;
   /** 最近一次建立的 Flow Field（DEV 疊加層顯示用） */
   lastFlow: FlowField | null = null;
   readonly stats = { flowBuilds: 0, paths: 0 };
@@ -88,7 +100,12 @@ export class Sim {
     this.economy = new EconomySystem(this);
     this.combat = new CombatSystem(this);
     const nPlayers = Math.max(2, this.map.starts.length);
-    for (let p = 0; p < nPlayers; p++) this.players.push(new Player(ECONOMY.start));
+    for (let p = 0; p < nPlayers; p++) {
+      const pl = new Player(ECONOMY.start.map((v) => v + (opts.bonusRes ?? 0)) as typeof ECONOMY.start);
+      pl.handicap = opts.handicap?.[p] ?? 1000;
+      this.players.push(pl);
+    }
+    this.popLimit = opts.popLimit ?? ECONOMY.popLimit;
     this.vision = new VisionSystem(this);
     this.createResources();
     if ((opts.start ?? (opts.map ? 'empty' : 'standard')) === 'standard') this.standardStart();
@@ -147,7 +164,84 @@ export class Sim {
     this.combat.step();
     this.movement.step();
     this.vision.step();
+    if (this.tick % 10 === 0) this.checkVictory();
     this.tick++;
+  }
+
+  /** 征服勝利（docs/01 §3）：失去所有太守府且沒有民夫 → 判負；只剩一方 → 勝利 */
+  private checkVictory(): void {
+    if (this.winner >= 0) return;
+    const n = this.players.length;
+    const hasTh = new Uint8Array(n);
+    const hasVil = new Uint8Array(n);
+    const bs = this.buildings;
+    for (let b = 0; b < bs.high; b++) if (bs.alive[b] && bs.complete[b] && BUILDING_DEFS[bs.btype[b]].id === 'town_hall') hasTh[bs.owner[b]] = 1;
+    const w = this.world;
+    for (let id = 0; id < w.high; id++) if (w.alive[id] && w.state[id] !== S.Dead && UNIT_DEFS[w.utype[id]].worker) hasVil[w.owner[id]] = 1;
+    for (let p = 0; p < n; p++) {
+      const pl = this.players[p];
+      if (!pl.defeated && !hasTh[p] && !hasVil[p]) this.defeat(p);
+    }
+    this.checkWinner();
+  }
+
+  defeat(p: number): void {
+    const pl = this.players[p];
+    if (pl.defeated) return;
+    pl.defeated = true;
+    this.events.push({ t: 'defeated', player: p });
+    this.checkWinner();
+  }
+
+  private checkWinner(): void {
+    if (this.winner >= 0) return;
+    const alive = this.players.map((pl, i) => (pl.defeated ? -1 : i)).filter((i) => i >= 0);
+    if (alive.length === 1) {
+      this.winner = alive[0];
+      this.events.push({ t: 'gameOver', winner: this.winner });
+    }
+  }
+
+  /** 生出單位，數值依該玩家的科技 */
+  spawnUnit(utype: number, owner: number, x: number, y: number): number {
+    const pl = this.players[owner];
+    const ut = pl ? pl.upgrade[utype] : utype;
+    const id = this.world.spawn(ut, owner, x, y, this.tick);
+    if (pl) {
+      this.world.hp[id] = pl.uHp[ut];
+      this.world.speed[id] = pl.uSpeed[ut];
+      pl.stats.trained++;
+    }
+    return id;
+  }
+
+  /** 研究完成：重算數值、升級場上的兵、補血、改速度 */
+  completeResearch(player: number, tech: number): void {
+    const pl = this.players[player];
+    if (!pl || pl.techs.has(tech)) return;
+    const oldHp = Int32Array.from(pl.uHp);
+    pl.techs.add(tech);
+    pl.recompute();
+    pl.stats.researched++;
+    const w = this.world;
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] !== player || w.state[id] === S.Dead) continue;
+      const from = w.utype[id];
+      const to = pl.upgrade[from];
+      if (to !== from) {
+        w.hp[id] = Math.max(1, Math.trunc((w.hp[id] * pl.uHp[to]) / Math.max(1, oldHp[from])));
+        w.utype[id] = to;
+        w.radius[id] = UNIT_DEFS[to].radiusFx;
+      } else if (pl.uHp[from] > oldHp[from]) {
+        w.hp[id] += pl.uHp[from] - oldHp[from];
+      }
+      w.speed[id] = pl.uSpeed[w.utype[id]];
+    }
+    // 生產佇列裡的舊兵種也換成新的
+    const bs = this.buildings;
+    for (let b = 0; b < bs.high; b++) if (bs.alive[b] && bs.owner[b] === player) bs.queue[b] = bs.queue[b].map((u) => pl.upgrade[u]);
+    this.events.push({ t: 'research', player, tech });
+    if (TECH_DEFS[tech].ageUp) this.economy.onAgeUp(player);
   }
 
   /** 某點的地面高度（高度單位：1 格 = 64），高低差修正用 */
@@ -173,7 +267,7 @@ export class Sim {
     }
     const rs = this.res;
     for (let r = 0; r < rs.high; r++) if (rs.alive[r]) h.add(r).add(rs.amount[r]);
-    for (const p of this.players) h.addArray(p.res).add(p.pop).add(p.popCap);
+    for (const p of this.players) h.addArray(p.res).add(p.pop).add(p.popCap).add(p.age).add(p.techs.size).add(p.defeated ? 1 : 0);
     h.add(this.projectiles.count);
     h.addArray(this.rng.getState());
     return h.value();
@@ -212,6 +306,9 @@ export class Sim {
         break;
       case 'buildLine':
         this.cmdBuildLine(c.player, c.ids, c.btype, c.x0, c.y0, c.x1, c.y1);
+        break;
+      case 'resign':
+        if (this.players[c.player]) this.defeat(c.player);
         break;
       case 'clear':
         for (let id = 0; id < this.world.high; id++) if (this.world.alive[id]) this.releaseNav(id);
@@ -285,7 +382,7 @@ export class Sim {
           const px = cx + i * sp;
           const py = cy + j * sp;
           if (px < 0 || py < 0 || px >= this.map.widthFx || py >= this.map.heightFx || !this.map.walkableFx(px, py)) continue;
-          this.world.spawn(unit, player, px, py, this.tick);
+          this.spawnUnit(unit, player, px, py);
           placed++;
         }
       }
@@ -594,7 +691,7 @@ export class Sim {
     const wood = ECONOMY.farmReseedWood;
     if (pl.autoReseed && pl.res[1] >= wood) {
       pl.res[1] -= wood;
-      bs.food[b] = BUILDING_DEFS[bs.btype[b]].food;
+      bs.food[b] = BUILDING_DEFS[bs.btype[b]].food + pl.farmFood;
     } else {
       this.removeBuilding(b);
     }
@@ -713,7 +810,7 @@ export class Sim {
       sy = tileCenter(ny);
     }
     const owner = bs.owner[b];
-    const id = this.world.spawn(utype, owner, sx, sy, this.tick);
+    const id = this.spawnUnit(utype, owner, sx, sy);
     const w = this.world;
     w.fx[id] = gx - sx;
     w.fy[id] = gy - sy;

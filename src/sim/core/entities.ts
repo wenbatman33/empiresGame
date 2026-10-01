@@ -1,5 +1,5 @@
 // 建築、資源點、玩家狀態
-import { BUILDING_DEFS, ECONOMY, RESOURCE_KINDS, type Cost } from './defs';
+import { BUILDING_DEFS, BUILDING_INDEX, ECONOMY, RESOURCE_KINDS, TAG, TECH_DEFS, UNIT_DEFS, UNIT_INDEX, type Cost } from './defs';
 import { tileCenter } from './fixed';
 
 /** 建築表 */
@@ -29,6 +29,9 @@ export class Buildings {
   readonly createdTick = new Int32Array(Buildings.CAP);
   /** 防禦建築射箭冷卻 */
   readonly cooldown = new Uint16Array(Buildings.CAP);
+  /** 研究中的科技（-1 ＝ 沒有）與進度 tick */
+  readonly research = new Int32Array(Buildings.CAP).fill(-1);
+  readonly rProgress = new Int32Array(Buildings.CAP);
   readonly lastAttacker = new Int32Array(Buildings.CAP).fill(-1);
   high = 0;
   count = 0;
@@ -57,6 +60,8 @@ export class Buildings {
     this.createdTick[id] = tick;
     this.cooldown[id] = 0;
     this.lastAttacker[id] = -1;
+    this.research[id] = -1;
+    this.rProgress[id] = 0;
     this.count++;
     return id;
   }
@@ -127,12 +132,111 @@ export class Player {
   housed = false;
   /** 農田耗盡時自動重播 */
   autoReseed = true;
+  /** 難度倍率（千分比；簡單 AI 採集 ×0.8、瘋狂 ×1.3，docs/05 §7） */
+  handicap = 1000;
   /** 統計：累計採集量 */
   gathered = [0, 0, 0, 0];
   defeated = false;
+  /** 統計（結算畫面） */
+  stats = { trained: 0, lost: 0, kills: 0, razed: 0, buildingsLost: 0, researched: 0 };
+
+  // ── 科技 ──
+  /** 已研究的科技 */
+  readonly techs = new Set<number>();
+  /** 農田採集倍率（千分比）、每塊農田額外糧食 */
+  farmMul = 1000;
+  farmFood = 0;
+  /** 兵種升級：原本種類 → 目前種類 */
+  readonly upgrade: number[] = UNIT_DEFS.map((_, i) => i);
+  /** 依科技算出的兵種數值 */
+  readonly uAtk = new Int32Array(UNIT_DEFS.length);
+  readonly uArmM = new Int32Array(UNIT_DEFS.length);
+  readonly uArmP = new Int32Array(UNIT_DEFS.length);
+  readonly uHp = new Int32Array(UNIT_DEFS.length);
+  readonly uRange = new Int32Array(UNIT_DEFS.length);
+  readonly uSpeed = new Int32Array(UNIT_DEFS.length);
+  /** 建築攻擊與射程加成 */
+  readonly bAtk = new Int32Array(BUILDING_DEFS.length);
+  readonly bRange = new Int32Array(BUILDING_DEFS.length);
 
   constructor(start: Cost) {
     this.res = [...start] as Cost;
+    this.recompute();
+  }
+
+  /** 依已研究科技重算所有數值（科技數量少，直接從頭算，結果一定一致） */
+  recompute(): void {
+    UNIT_DEFS.forEach((d, i) => {
+      this.uAtk[i] = d.attack;
+      this.uArmM[i] = d.armor[0];
+      this.uArmP[i] = d.armor[1];
+      this.uHp[i] = d.hp;
+      this.uRange[i] = d.rangeFx;
+      this.uSpeed[i] = d.speedFx;
+      this.upgrade[i] = i;
+    });
+    this.bAtk.fill(0);
+    this.bRange.fill(0);
+    this.gatherMul = [1000, 1000, 1000, 1000];
+    this.farmMul = 1000;
+    this.farmFood = 0;
+    this.carryCap = ECONOMY.carry;
+    this.age = 1;
+    const ids = [...this.techs].sort((a, b) => a - b);
+    for (const t of ids) {
+      for (const e of TECH_DEFS[t].effects) {
+        if (e.age) this.age = Math.max(this.age, e.age);
+        if (e.upgrade) {
+          const from = UNIT_INDEX[e.upgrade[0]];
+          const to = UNIT_INDEX[e.upgrade[1]];
+          for (let k = 0; k < this.upgrade.length; k++) if (this.upgrade[k] === from) this.upgrade[k] = to;
+        }
+        if (!e.target || !e.stat) continue;
+        if (e.target === 'player') {
+          const mul = Math.round((e.mul ?? 1) * 1000);
+          if (e.stat === 'carry') this.carryCap += e.add ?? 0;
+          else if (e.stat === 'farmFood') this.farmFood += e.add ?? 0;
+          else if (e.stat === 'gather.farm') this.farmMul = Math.trunc((this.farmMul * mul) / 1000);
+          else if (e.stat.startsWith('gather.')) {
+            const k = ['food', 'wood', 'gold', 'stone'].indexOf(e.stat.slice(7));
+            if (k >= 0) this.gatherMul[k] = Math.trunc((this.gatherMul[k] * mul) / 1000);
+          }
+          continue;
+        }
+        if (e.target.startsWith('building:')) {
+          const b = BUILDING_INDEX[e.target.slice(9)];
+          if (b === undefined) continue;
+          if (e.stat === 'attack') this.bAtk[b] += e.add ?? 0;
+          else if (e.stat === 'range') this.bRange[b] += (e.add ?? 0) << 10;
+          continue;
+        }
+        UNIT_DEFS.forEach((d, i) => {
+          if (!matches(e.target!, i)) return;
+          const add = e.add ?? 0;
+          const mul = e.mul ?? 1;
+          switch (e.stat) {
+            case 'attack':
+              this.uAtk[i] += add;
+              break;
+            case 'armorM':
+              this.uArmM[i] += add;
+              break;
+            case 'armorP':
+              this.uArmP[i] += add;
+              break;
+            case 'hp':
+              this.uHp[i] += add;
+              break;
+            case 'range':
+              this.uRange[i] += d.rangeFx > 0 ? add << 10 : 0;
+              break;
+            case 'speed':
+              this.uSpeed[i] = Math.round(this.uSpeed[i] * mul);
+              break;
+          }
+        });
+      }
+    }
   }
 
   canAfford(c: Cost): boolean {
@@ -167,6 +271,9 @@ export class Projectiles {
   readonly hit = new Uint8Array(Projectiles.CAP);
   /** 射手（被打的一方用來反擊） */
   readonly from = new Int32Array(Projectiles.CAP);
+  /** 範圍傷害半徑（定點數；0 ＝ 單體）、建築加成（範圍傷害打到建築時用） */
+  readonly splash = new Int32Array(Projectiles.CAP);
+  readonly bldBonus = new Int32Array(Projectiles.CAP);
   high = 0;
   count = 0;
   private free: number[] = [];
@@ -186,4 +293,14 @@ export class Projectiles {
     this.count--;
     this.free.push(id);
   }
+}
+
+/** 科技效果的對象是否包含這個兵種 */
+function matches(target: string, u: number): boolean {
+  const d = UNIT_DEFS[u];
+  if (target === 'melee') return d.rangeFx === 0 && !d.worker && !(d.tags & TAG.siege);
+  if (target === 'infantryNotArcher') return (d.tags & TAG.infantry) !== 0 && !(d.tags & TAG.archer) && !d.worker;
+  if (target.startsWith('tag:')) return (d.tags & (TAG[target.slice(4)] ?? 0)) !== 0;
+  if (target.startsWith('unit:')) return d.id === target.slice(5);
+  return false;
 }

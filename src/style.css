@@ -439,3 +439,222 @@ body {
   height: 3px;
   background: #8fe36b;
 }
+.research {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  margin-top: 2px;
+}
+.hp.prog i {
+  background: linear-gradient(#ffd96b, #e0a830);
+}
+.card-btn {
+  white-space: pre-line;
+}
+
+/* ───────── M3：選單、結算、升時代 ───────── */
+.menu-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(circle at 50% 35%, #5a3d22 0%, #24170d 70%);
+  overflow-y: auto;
+}
+.menu-screen.dim {
+  background: rgba(15, 10, 6, 0.72);
+}
+.menu-card {
+  width: min(460px, 100%);
+  background: linear-gradient(#3a2818, #2a1d12);
+  border: 3px solid var(--gold);
+  border-radius: 16px;
+  padding: 22px 22px 18px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+.menu-card.small {
+  width: min(320px, 100%);
+}
+.menu-title {
+  font-size: 52px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.25em;
+  text-shadow: 0 4px 0 #000, 0 0 24px rgba(232, 196, 106, 0.4);
+  line-height: 1.1;
+}
+.menu-title.sm {
+  font-size: 30px;
+}
+.menu-title.win {
+  color: #ffd96b;
+}
+.menu-title.lose {
+  color: #c9a0a0;
+}
+.menu-sub {
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+.menu-main,
+.menu-setup,
+.menu-help {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.menu-setup label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.menu-setup select,
+.menu-setup input {
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--gold);
+  background: #1d140d;
+  color: var(--paper);
+  width: 55%;
+}
+.menu-help p {
+  text-align: left;
+  margin: 0;
+  line-height: 1.5;
+  font-size: 14px;
+}
+.menu-row {
+  display: flex;
+  gap: 8px;
+}
+.menu-row .menu-btn {
+  flex: 1;
+}
+.menu-btn {
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 2px solid rgba(232, 196, 106, 0.6);
+  background: #4a3220;
+  color: var(--paper);
+  cursor: pointer;
+}
+.menu-btn.primary {
+  background: linear-gradient(#b8432f, #8a2a1c);
+  border-color: var(--gold);
+}
+.menu-btn.danger {
+  border-color: #c96a5a;
+}
+.menu-btn:active {
+  transform: scale(0.97);
+}
+table.stats {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+table.stats th {
+  text-align: left;
+  font-weight: 400;
+  opacity: 0.85;
+  padding: 3px 6px;
+}
+table.stats td {
+  text-align: right;
+  padding: 3px 6px;
+}
+table.stats tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.05);
+}
+#menu-btn {
+  position: fixed;
+  right: 10px;
+  top: 8px;
+  z-index: 60;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 2px solid rgba(232, 196, 106, 0.7);
+  background: rgba(42, 31, 22, 0.88);
+  color: var(--gold);
+  font-size: 20px;
+  cursor: pointer;
+}
+#hud[data-layout='mobile'] ~ #menu-btn,
+body:has(#hud[data-layout='mobile']) #menu-btn {
+  width: 34px;
+  height: 34px;
+  top: 4px;
+  right: 6px;
+}
+.age-banner {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  animation: fadein 0.4s;
+}
+.age-banner.out {
+  opacity: 0;
+  transition: opacity 0.7s;
+}
+.age-banner .scroll {
+  min-width: min(560px, 90vw);
+  padding: 22px 40px;
+  background: linear-gradient(90deg, #6b4a2a, #e8d6a8 8%, #f3e6c2 50%, #e8d6a8 92%, #6b4a2a);
+  border-top: 6px solid #3a2414;
+  border-bottom: 6px solid #3a2414;
+  text-align: center;
+  color: #2a1a0e;
+  animation: unroll 0.8s cubic-bezier(0.2, 0.8, 0.3, 1);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.age-banner .age-name {
+  font-size: clamp(40px, 9vw, 78px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: #8a1f12;
+}
+.age-banner .age-sub {
+  font-size: 16px;
+}
+@keyframes unroll {
+  from {
+    transform: scaleX(0.05);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+}
+[hidden] {
+  display: none !important;
+}
+.menu-title {
+  font-size: clamp(34px, 11vw, 52px);
+  white-space: nowrap;
+}
+.menu-row .menu-btn {
+  white-space: nowrap;
+  font-size: clamp(13px, 3.8vw, 18px);
+  padding: 10px 6px;
+}

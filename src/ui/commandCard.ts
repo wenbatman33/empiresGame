@@ -1,6 +1,6 @@
 // 指令卡（docs/01 §4、§8）：依選取內容顯示建造／生產／集結等按鈕
 // PC 快捷鍵避開 WASD（鏡頭）、H（回城）、P（暫停）
-import { BUILDING_DEFS, BUILDING_INDEX, RES_NAMES, UNIT_DEFS, type Cost } from '../sim/core/defs';
+import { BUILDING_DEFS, BUILDING_INDEX, RES_NAMES, TECH_DEFS, UNIT_DEFS, type Cost, type TechDef } from '../sim/core/defs';
 import type { Game } from '../game';
 
 export interface CardButton {
@@ -43,9 +43,52 @@ export const UNIT_ICONS: Record<string, string> = {
   light_cav: '🐎',
   heavy_cav: '🏇',
   horse_archer: '🎠',
+  elite_swordsman: '🛡️',
+  halberdier: '🔱',
+  crossbowman: '🏹',
+  swift_cav: '🐎',
+  iron_cav: '🏇',
+  ram: '🪵',
+  trebuchet: '☄️',
 };
+BUILD_ICONS.workshop = '🛠️';
+
+const TECH_ICONS: Record<string, string> = {
+  age2: '📜', age3: '📜', age4: '📜', loom: '🧵', wheelbarrow: '🛞', handcart: '🛒', plow: '🌱', seeder: '🌾', waterwheel: '💧',
+  axe: '🪓', saw: '🪚', twoman: '🪚', pick: '⛏️', stonecut: '🪨', shaft: '⛏️', forge: '⚔️', steel: '⚔️', hundred: '⚔️',
+  fletch: '🏹', ironhead: '🏹', piercing: '🏹', inf1: '🥋', inf2: '🥋', inf3: '🥋', cav1: '🐴', cav2: '🐴', cav3: '🐴',
+  arc1: '🦺', arc2: '🦺', arc3: '🦺', up_elite_sword: '⬆️', up_halberd: '⬆️', up_crossbow: '⬆️', up_elite_ha: '⬆️', up_swift: '⬆️', up_iron: '⬆️',
+};
+const TARGET_NAMES: Record<string, string> = {
+  melee: '近戰兵',
+  infantryNotArcher: '步兵',
+  'tag:archer': '弓兵類',
+  'tag:cavalry': '騎兵',
+  'unit:villager': '民夫',
+  'unit:horse_archer': '弓騎',
+  'building:tower': '箭塔',
+  'building:town_hall': '太守府',
+};
+const STAT_NAMES: Record<string, string> = { attack: '攻擊', armorM: '近甲', armorP: '遠甲', hp: 'HP', range: '射程', speed: '移速', carry: '攜帶量', farmFood: '每塊農田糧食' };
+const GATHER_NAMES: Record<string, string> = { 'gather.farm': '農田採集', 'gather.wood': '伐木', 'gather.gold': '採金', 'gather.stone': '採石' };
+
+/** 科技效果的一句話說明 */
+export function techSummary(t: TechDef): string {
+  const parts: string[] = [];
+  for (const e of t.effects) {
+    if (e.age) parts.push(`進入「${AGE_NAMES[e.age]}」：解鎖新建築與兵種，所有建築換新外觀`);
+    else if (e.upgrade) parts.push(`${UNIT_DEFS.find((u) => u.id === e.upgrade![0])?.name} 升級為 ${UNIT_DEFS.find((u) => u.id === e.upgrade![1])?.name}（場上的也一起升級）`);
+    else if (e.stat && GATHER_NAMES[e.stat]) parts.push(`${GATHER_NAMES[e.stat]} ＋${Math.round(((e.mul ?? 1) - 1) * 100)}%`);
+    else if (e.stat) {
+      const who = e.target === 'player' ? '' : TARGET_NAMES[e.target ?? ''] ?? '';
+      const val = e.mul ? `＋${Math.round((e.mul - 1) * 100)}%` : `＋${e.add}`;
+      parts.push(`${who}${STAT_NAMES[e.stat] ?? e.stat} ${val}`);
+    }
+  }
+  return [...new Set(parts)].join('、');
+}
 /** 民夫建造選單：第一頁經濟、第二頁軍事與防禦 */
-const BUILD_ORDER = ['house', 'farm', 'lumber_camp', 'mine_camp', 'granary', 'barracks', 'archery', 'stable', 'blacksmith', 'tower', 'palisade', 'wall', 'town_hall'];
+const BUILD_ORDER = ['house', 'farm', 'lumber_camp', 'mine_camp', 'granary', 'barracks', 'archery', 'stable', 'blacksmith', 'tower', 'palisade', 'wall', 'workshop', 'town_hall'];
 const STANCE_NAMES = ['進攻', '防守', '堅守', '不還擊'];
 
 export function costText(c: Cost): string {
@@ -116,9 +159,29 @@ export class CommandCard {
     if (b >= 0 && bs.alive[b] && bs.owner[b] === g.myPlayer) {
       const def = BUILDING_DEFS[bs.btype[b]];
       if (bs.complete[b]) {
-        for (const ut of def.trains) {
+        // 研究（升時代排第一）
+        const techs = TECH_DEFS.map((t, i) => [t, i] as const).filter(([t, i]) => t.building === bs.btype[b] && !pl.techs.has(i) && (t.ageUp ? t.age === pl.age : t.age <= pl.age + 1));
+        techs.sort((a, c) => Number(c[0].ageUp) - Number(a[0].ageUp) || a[0].age - c[0].age);
+        const researching = bs.research[b] >= 0;
+        for (const [t, i] of techs) {
+          if (bs.research[b] === i) continue;
+          const block = g.sim.economy.researchBlocker(g.myPlayer, b, i);
+          // 前置科技沒研究的先不顯示，免得按鈕太多
+          if (t.req && !pl.techs.has(TECH_DEFS.findIndex((x) => x.id === t.req))) continue;
+          out.push({
+            id: `tech:${t.id}`,
+            icon: TECH_ICONS[t.id] ?? '📘',
+            label: t.name,
+            tip: `${t.name}：${techSummary(t)}（${costText(t.cost)}，${t.ticks / 10} 秒）${block ? `\n⚠ ${block}` : ''}`,
+            cost: t.cost,
+            enabled: !block && pl.canAfford(t.cost) && !researching,
+            action: () => g.research(b, i),
+          });
+        }
+        for (const base of def.trains) {
+          const ut = pl.upgrade[base];
           const u = UNIT_DEFS[ut];
-          const locked = u.age > pl.age;
+          const locked = UNIT_DEFS[base].age > pl.age;
           const queued = bs.queue[b].filter((q) => q === ut).length;
           out.push({
             id: `train:${u.id}`,
@@ -126,7 +189,7 @@ export class CommandCard {
             label: u.name,
             tip: locked ? `${u.name}：需要「${AGE_NAMES[u.age]}」時代` : `訓練${u.name}（${costText(u.cost)}，${u.trainTicks / 10} 秒）`,
             cost: u.cost,
-            enabled: !locked && pl.canAfford(u.cost),
+            enabled: !locked && pl.canAfford(u.cost) && !researching,
             badge: queued ? String(queued) : undefined,
             action: () => g.train(b, ut),
           });

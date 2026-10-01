@@ -1,6 +1,6 @@
 // 經濟系統（docs/04、docs/06）：民夫採集／回倉／建造／耕田、施工進度、生產佇列、人口
 import type { Command } from '../core/commands';
-import { BUILDING_DEFS, ECONOMY, RESOURCE_KINDS, RK, UNIT_DEFS, type Cost } from '../core/defs';
+import { AGE_EXCLUDE, BUILDING_DEFS, ECONOMY, RESOURCE_KINDS, RK, TECH_DEFS, TECH_INDEX, UNIT_DEFS, type Cost } from '../core/defs';
 import { FX_SHIFT, ONE, isqrt } from '../core/fixed';
 import { S, TASK } from '../core/world';
 import type { Sim } from '../sim';
@@ -211,7 +211,7 @@ export class EconomySystem {
       }
       this.face(id, res.x[r], res.y[r]);
       w.carryRes[id] = kd.res;
-      w.gatherAcc[id] += Math.trunc((kd.rateMilli * pl.gatherMul[kd.res]) / 1000);
+      w.gatherAcc[id] += Math.trunc((Math.trunc((kd.rateMilli * pl.gatherMul[kd.res]) / 1000) * pl.handicap) / 1000);
       while (w.gatherAcc[id] >= 1000 && res.amount[r] > 0 && w.carry[id] < pl.carryCap) {
         w.gatherAcc[id] -= 1000;
         w.carry[id]++;
@@ -260,7 +260,7 @@ export class EconomySystem {
         return;
       }
       w.carryRes[id] = 0;
-      w.gatherAcc[id] += Math.trunc((ECONOMY.farmRateMilli * pl.gatherMul[0]) / 1000);
+      w.gatherAcc[id] += Math.trunc((Math.trunc((ECONOMY.farmRateMilli * pl.farmMul) / 1000) * pl.handicap) / 1000);
       while (w.gatherAcc[id] >= 1000 && bs.food[b] > 0 && w.carry[id] < pl.carryCap) {
         w.gatherAcc[id] -= 1000;
         w.carry[id]++;
@@ -459,6 +459,9 @@ export class EconomySystem {
     return true;
   }
 
+  /** 升時代：農田容量等不需要額外處理；保留給之後（例如建築外觀換代由渲染層處理） */
+  onAgeUp(_player: number): void {}
+
   // ───────── 施工、人口、生產 ─────────
 
   private construction(): void {
@@ -486,7 +489,7 @@ export class EconomySystem {
     }
     for (let id = 0; id < w.high; id++) if (w.alive[id] && w.state[id] !== S.Dead) sim.players[w.owner[id]].pop += UNIT_DEFS[w.utype[id]].pop;
     for (let b = 0; b < bs.high; b++) if (bs.alive[b] && bs.complete[b]) sim.players[bs.owner[b]].popCap += BUILDING_DEFS[bs.btype[b]].pop;
-    for (const p of sim.players) p.popCap = Math.min(p.popCap, ECONOMY.popLimit);
+    for (const p of sim.players) p.popCap = Math.min(p.popCap, sim.popLimit);
   }
 
   private production(): void {
@@ -494,7 +497,18 @@ export class EconomySystem {
     const bs = sim.buildings;
     for (const p of sim.players) p.housed = false;
     for (let b = 0; b < bs.high; b++) {
-      if (!bs.alive[b] || !bs.complete[b] || !bs.queue[b].length) continue;
+      if (!bs.alive[b] || !bs.complete[b]) continue;
+      // 研究中：建築不生產（太守府升時代時不能生民夫）
+      const r = bs.research[b];
+      if (r >= 0) {
+        if (++bs.rProgress[b] >= TECH_DEFS[r].ticks) {
+          bs.research[b] = -1;
+          bs.rProgress[b] = 0;
+          sim.completeResearch(bs.owner[b], r);
+        }
+        continue;
+      }
+      if (!bs.queue[b].length) continue;
       const pl = sim.players[bs.owner[b]];
       const ut = bs.queue[b][0];
       const def = UNIT_DEFS[ut];
@@ -513,6 +527,34 @@ export class EconomySystem {
         bs.queue[b].push(ut);
       }
     }
+  }
+
+  /** 能不能在這棟建築研究這項科技（不含資源檢查以外的條件都在這） */
+  researchBlocker(player: number, b: number, tech: number): string {
+    const sim = this.sim;
+    const bs = sim.buildings;
+    const pl = sim.players[player];
+    const t = TECH_DEFS[tech];
+    if (!t || t.building !== bs.btype[b]) return '這裡不能研究';
+    if (pl.techs.has(tech)) return '已研究';
+    if (t.ageUp ? pl.age !== t.age : pl.age < t.age) return t.ageUp ? '已經是這個時代' : `需要「${['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'][t.age]}」`;
+    if (t.req && !pl.techs.has(TECH_INDEX[t.req])) return `需要先研究「${TECH_DEFS[TECH_INDEX[t.req]].name}」`;
+    for (let k = 0; k < bs.high; k++) if (bs.alive[k] && bs.owner[k] === player && bs.research[k] === tech) return '研究中';
+    if (bs.research[b] >= 0) return '這棟建築正在研究別的科技';
+    if (t.ageUp) {
+      let n = 0;
+      for (let k = 0; k < bs.high; k++) {
+        if (!bs.alive[k] || bs.owner[k] !== player || !bs.complete[k]) continue;
+        const d = BUILDING_DEFS[bs.btype[k]];
+        if (d.age === pl.age && !AGE_EXCLUDE.has(d.id)) n++;
+      }
+      if (n < 2) return `需要 2 座「${['', '黃巾亂世', '群雄割據', '三分天下'][pl.age]}」的建築（目前 ${n} 座）`;
+    }
+    return '';
+  }
+
+  canResearch(player: number, b: number, tech: number): boolean {
+    return this.researchBlocker(player, b, tech) === '' && this.sim.players[player].canAfford(TECH_DEFS[tech].cost);
   }
 
   // ───────── 指令 ─────────
@@ -586,11 +628,15 @@ export class EconomySystem {
         if (b < 0 || b >= bs.high || !bs.alive[b] || bs.owner[b] !== c.player || !bs.complete[b]) return;
         const def = BUILDING_DEFS[bs.btype[b]];
         const pl = sim.players[c.player];
-        if (!def.trains.includes(c.unit) || UNIT_DEFS[c.unit].age > pl.age) return;
-        const cost: Cost = UNIT_DEFS[c.unit].cost;
+        // 升級過的兵種：照目前的種類生產
+        const base = def.trains.find((t) => t === c.unit || pl.upgrade[t] === c.unit);
+        if (base === undefined) return;
+        const ut = pl.upgrade[base];
+        if (UNIT_DEFS[ut].age > pl.age && UNIT_DEFS[base].age > pl.age) return;
+        const cost: Cost = UNIT_DEFS[ut].cost;
         for (let k = 0; k < c.count && bs.queue[b].length < ECONOMY.queueMax && pl.canAfford(cost); k++) {
           pl.pay(cost);
-          bs.queue[b].push(c.unit);
+          bs.queue[b].push(ut);
         }
         break;
       }
@@ -618,12 +664,31 @@ export class EconomySystem {
         bs.loop[b] = c.on ? 1 : 0;
         break;
       }
+      case 'research': {
+        const b = c.building;
+        const pl = sim.players[c.player];
+        if (!pl || b < 0 || b >= bs.high || !bs.alive[b] || bs.owner[b] !== c.player || !bs.complete[b]) return;
+        if (!this.canResearch(c.player, b, c.tech)) return;
+        pl.pay(TECH_DEFS[c.tech].cost);
+        bs.research[b] = c.tech;
+        bs.rProgress[b] = 0;
+        break;
+      }
+      case 'cancelResearch': {
+        const b = c.building;
+        if (b < 0 || b >= bs.high || !bs.alive[b] || bs.owner[b] !== c.player || bs.research[b] < 0) return;
+        sim.players[c.player].refund(TECH_DEFS[bs.research[b]].cost);
+        bs.research[b] = -1;
+        bs.rProgress[b] = 0;
+        break;
+      }
       case 'cheat': {
         const pl = sim.players[c.player];
         if (!pl) return;
         if (c.kind === 'res') for (let k = 0; k < 4; k++) pl.res[k] += 1000;
-        else if (c.kind === 'age') pl.age = Math.min(4, pl.age + 1);
-        else
+        else if (c.kind === 'age') {
+          if (pl.age < 4) sim.completeResearch(c.player, TECH_INDEX[`age${pl.age + 1}`]);
+        } else
           for (let b = 0; b < bs.high; b++) {
             if (!bs.alive[b] || bs.owner[b] !== c.player || bs.complete[b]) continue;
             bs.progress[b] = BUILDING_DEFS[bs.btype[b]].buildTicks * 3;

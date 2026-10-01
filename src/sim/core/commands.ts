@@ -29,7 +29,12 @@ export type Command =
   | { t: 'reseed'; tick: number; player: number; on: boolean }
   | { t: 'destroy'; tick: number; player: number; building: number }
   /** DEV 作弊（也走指令，重播才一致） */
-  | { t: 'cheat'; tick: number; player: number; kind: 'res' | 'build' | 'age' };
+  | { t: 'cheat'; tick: number; player: number; kind: 'res' | 'build' | 'age' }
+  /** 研究科技（含升時代） */
+  | { t: 'research'; tick: number; player: number; building: number; tech: number }
+  | { t: 'cancelResearch'; tick: number; player: number; building: number }
+  /** 投降 */
+  | { t: 'resign'; tick: number; player: number };
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 export type CommandInput = DistributiveOmit<Command, 'tick'>;

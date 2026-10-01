@@ -223,7 +223,10 @@ export class Controls {
       e.preventDefault();
       return;
     }
-    if (e.code === 'Escape') g.clearSelection();
+    if (e.code === 'Escape') {
+      if (g.menuOpen || (!g.placing && !g.selected.size && g.selBuilding < 0 && g.selResource < 0)) g.openMenu();
+      else g.clearSelection();
+    }
     else if (e.code === 'Delete') g.destroySelectedBuilding();
     else if (e.code === 'KeyH') g.goHome();
     else if (e.code === 'Space') {

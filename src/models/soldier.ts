@@ -23,7 +23,7 @@ const PART_COUNT = 14;
 /** 騎手坐在馬上的高度 */
 const SADDLE = 0.36;
 
-export type WeaponKind = 'sword' | 'spear' | 'bow' | 'tool';
+export type WeaponKind = 'sword' | 'spear' | 'bow' | 'tool' | 'ram' | 'trebuchet';
 export type HatKind = 'helmet' | 'straw' | 'band';
 
 export interface SoldierSpec {
@@ -39,6 +39,10 @@ export interface SoldierSpec {
   barding?: boolean;
   /** 背旗（斥候） */
   backFlag?: boolean;
+  /** 戟：槍頭旁加月牙刃 */
+  halberd?: boolean;
+  /** 頭盔紅纓改金色（精銳） */
+  elite?: boolean;
 }
 
 /** 各兵種外觀（docs/03 §5 剪影重點） */
@@ -51,7 +55,14 @@ export const SOLDIER_SPECS: Record<string, SoldierSpec> = {
   light_cav: { kind: 'spear', hat: 'helmet', cloth: 0x7a5a3a, trim: 0x8b6b45, pants: 0x3f352a, horse: 0x8a5a32 },
   heavy_cav: { kind: 'sword', hat: 'helmet', cloth: 0x5a5f66, trim: 0x6f7780, pants: 0x3a3a3a, horse: 0x4a3a30, barding: true, pauldrons: true, shield: true },
   horse_archer: { kind: 'bow', hat: 'band', cloth: 0x6a7a3a, trim: 0x7a6a40, pants: 0x46402e, horse: 0xa0703f },
+  elite_swordsman: { kind: 'sword', hat: 'helmet', cloth: 0x6a2f24, trim: 0xb8952f, pants: 0x3a2a20, shield: true, pauldrons: true, elite: true },
+  halberdier: { kind: 'spear', hat: 'helmet', cloth: 0x5a4430, trim: 0x8b6b45, pants: 0x3f352a, pauldrons: true, halberd: true },
+  crossbowman: { kind: 'bow', hat: 'helmet', cloth: 0x45602e, trim: 0x6f7780, pants: 0x3a3a2a, pauldrons: true },
+  swift_cav: { kind: 'spear', hat: 'helmet', cloth: 0x8a3a2a, trim: 0xb8952f, pants: 0x3f352a, horse: 0xc9b896, elite: true },
+  iron_cav: { kind: 'sword', hat: 'helmet', cloth: 0x3c4148, trim: 0x2a2d32, pants: 0x2a2a2a, horse: 0x2a2420, barding: true, pauldrons: true, shield: true, elite: true },
 };
+/** 攻城器械用另外的建模（siege.ts） */
+export const SIEGE_KINDS: Record<string, 'ram' | 'trebuchet'> = { ram: 'ram', trebuchet: 'trebuchet' };
 
 const SKIN = 0xf3c9a0;
 const HAIR = 0x2b211c;
@@ -155,7 +166,7 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
   if (spec.hat === 'helmet') {
     add(new THREE.SphereGeometry(0.182, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), P.head, IRON, 0, M(0, 0.63, -0.01));
     add(cyl(0.188, 0.188, 0.03, 8, true), P.head, IRON, 0, M(0, 0.63, -0.01));
-    add(cone(0.04, 0.13, 5), P.head, 0xffffff, 1, M(0, 0.86, -0.01));
+    add(cone(0.04, 0.13, 5), P.head, spec.elite ? 0xe0b040 : 0xffffff, spec.elite ? 0 : 1, M(0, 0.86, -0.01));
   } else if (spec.hat === 'straw') {
     add(cone(0.3, 0.13, 9), P.head, 0xd9b96a, 0, M(0, 0.78, 0));
   } else {
@@ -182,6 +193,7 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
     add(cyl(0.017, 0.017, 1.45, 5), P.weapon, WOOD, 0, M(hx, hy + 0.47, hz));
     add(cone(0.042, 0.17, 5), P.weapon, STEEL, 0, M(hx, hy + 1.28, hz));
     add(cone(0.055, 0.08, 6), P.weapon, 0xffffff, 1, M(hx, hy + 1.16, hz, Math.PI));
+    if (spec.halberd) add(box(0.02, 0.2, 0.14), P.weapon, STEEL, 0, M(hx, hy + 1.22, hz + 0.08));
   } else if (spec.kind === 'tool') {
     add(cyl(0.016, 0.016, 0.62, 5), P.weapon, WOOD, 0, M(hx, hy + 0.2, hz));
     add(box(0.05, 0.04, 0.14), P.weapon, IRON, 0, M(hx, hy + 0.5, hz + 0.06));

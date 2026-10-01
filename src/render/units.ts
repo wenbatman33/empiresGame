@@ -2,7 +2,8 @@
 // 每幀從模擬層讀位置（前後兩個 tick 內插）、算朝向、決定動畫，寫進實例屬性
 import * as THREE from 'three';
 import { PLAYER_COLORS, UNIT_LOOK } from '../config';
-import { buildSoldier, SOLDIER_SPECS, type AnimName } from '../models/soldier';
+import { buildRam, buildTrebuchet } from '../models/siege';
+import { buildSoldier, SIEGE_KINDS, SOLDIER_SPECS, type AnimName } from '../models/soldier';
 import { CAPACITY, S, UNIT_DEFS } from '../sim/core/world';
 import { ONE } from '../sim/core/fixed';
 import type { Sim } from '../sim/sim';
@@ -37,8 +38,9 @@ export class UnitRenderer {
 
   constructor(private terrain: Terrain) {
     for (const def of UNIT_DEFS) {
-      const spec = SOLDIER_SPECS[def.id];
-      const baked = bakeVat(buildSoldier(spec), spec.kind);
+      const siege = SIEGE_KINDS[def.id];
+      const spec = SOLDIER_SPECS[def.id] ?? SOLDIER_SPECS.swordsman;
+      const baked = siege ? bakeVat(siege === 'ram' ? buildRam() : buildTrebuchet(), siege) : bakeVat(buildSoldier(spec), spec.kind);
       const mesh = new THREE.InstancedMesh(baked.geometry, makeVatMaterial(baked.texture), MAX_PER_TYPE);
       mesh.customDepthMaterial = makeVatDepthMaterial(baked.texture);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

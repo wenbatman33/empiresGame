@@ -9,7 +9,7 @@ import { ONE } from '../sim/core/fixed';
 import { NAV, UNIT_DEFS } from '../sim/core/world';
 import { PASS_BLOCKED, PASS_SHALLOW } from '../sim/map/grid';
 import { Sim } from '../sim/sim';
-import { EconomyBot } from '../ai/economyBot';
+import { AIPlayer } from '../ai/ai';
 import { applyBox, detectLayout, HUD_KEYS, HUD_NAMES, LAYOUTS, type Anchor, type HudBox, type HudKey, type LayoutMode } from '../ui/layout';
 
 const STORE = 'empiresGame.dev';
@@ -149,9 +149,9 @@ export class DevTools {
     f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'build' }) }, 'go').name('⚡ 我方工地瞬間完工');
     f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'age' }) }, 'go').name('⏫ 我方直接升一個時代');
     f.add(g.fog, 'enabled').name('戰爭迷霧（關掉＝全圖視野，只影響畫面）');
-    f.add({ on: g.bots.length > 0 }, 'on').name('敵方經濟 AI').onChange((on: boolean) => {
-      g.bots.length = 0;
-      if (on) g.bots.push(new EconomyBot(g.sim, 1));
+    f.add({ on: g.ais.length > 0 }, 'on').name('敵方 AI').onChange((on: boolean) => {
+      g.ais.length = 0;
+      if (on) g.ais.push(new AIPlayer(g.sim, 1, g.setup.ai));
     });
     f.add({ go: () => g.sim.issue({ t: 'clear' }) }, 'go').name('🗑 清除全部單位');
   }
@@ -164,7 +164,7 @@ export class DevTools {
     f.add({ go: () => { g.paused = true; g.sim.step(); } }, 'go').name('單步 1 tick');
     f.add({ go: () => this.checkDeterminism() }, 'go').name('✔ 確定性檢查（重播比對）');
     f.add({ seed: g.sim.seed }, 'seed').name('地圖種子').disable();
-    f.add({ go: () => { const u = new URL(location.href); u.searchParams.set('seed', String((Math.random() * 1e9) | 0)); location.href = u.toString(); } }, 'go').name('🎲 換一張地圖');
+    f.add({ go: () => { const u = new URL(location.href); u.searchParams.set('play', '1'); u.searchParams.set('seed', String((Math.random() * 1e9) | 0)); location.href = u.toString(); } }, 'go').name('🎲 換一張地圖');
   }
 
   private buildCamera(): void {

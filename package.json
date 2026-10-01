@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "lint:sim": "node scripts/check-sim.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "ai-arena": "vitest run --config scripts/vitest.arena.config.ts --silent=false"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
