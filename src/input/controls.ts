@@ -117,6 +117,8 @@ export class Controls {
   };
 
   private onMove = (e: PointerEvent): void => {
+    // 放置建築：滑鼠移動時預覽跟著走
+    if (e.pointerType === 'mouse' && this.game.placing) this.game.updatePlacing(e.clientX, e.clientY);
     const p = this.pointers.get(e.pointerId);
     if (!p) return;
     const px = p.x;
@@ -172,6 +174,15 @@ export class Controls {
       this.mode = 'none';
       const now = performance.now();
       if (p.type === 'mouse') {
+        if (g.placing) {
+          g.updatePlacing(p.x, p.y);
+          g.confirmPlacing(e.shiftKey);
+          return;
+        }
+        if (g.rallyMode) {
+          g.setRallyAt(p.x, p.y);
+          return;
+        }
         const dbl = now - this.lastClick.t < DOUBLE_MS && Math.hypot(p.x - this.lastClick.x, p.y - this.lastClick.y) < 8;
         this.lastClick = { t: now, x: p.x, y: p.y };
         if (dbl) g.selectSameType(p.x, p.y);
@@ -208,7 +219,12 @@ export class Controls {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
     this.keys.add(e.code);
     const g = this.game;
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && g.hud.card.handleKey(e.code)) {
+      e.preventDefault();
+      return;
+    }
     if (e.code === 'Escape') g.clearSelection();
+    else if (e.code === 'Delete') g.destroySelectedBuilding();
     else if (e.code === 'KeyH') g.goHome();
     else if (e.code === 'Period') g.selectIdleVillager();
     else if (e.code === 'KeyP') g.togglePause();

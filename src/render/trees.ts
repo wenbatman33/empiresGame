@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { T, type MapGrid } from '../sim/map/grid';
 import type { Terrain } from './terrain';
 import { vatTime } from './vat';
+import { STUMP } from '../models/resources';
 
 function colored(geo: THREE.BufferGeometry, hex: number, m: THREE.Matrix4): THREE.BufferGeometry {
   const g = (geo.index ? geo.toNonIndexed() : geo).applyMatrix4(m);
@@ -45,9 +46,14 @@ function hash(x: number, y: number, s: number): number {
 export class Trees {
   readonly group = new THREE.Group();
   count = 0;
+  /** 格子 → 哪個實例（砍完時隱藏） */
+  private byTile = new Map<number, { mesh: THREE.InstancedMesh; i: number; x: number; z: number }>();
+  private stumps: THREE.InstancedMesh;
+  private readonly mapW: number;
 
   constructor(map: MapGrid, terrain: Terrain) {
-    const spots: { x: number; z: number; v: number; s: number; r: number }[] = [];
+    this.mapW = map.w;
+    const spots: { x: number; z: number; v: number; s: number; r: number; tile: number }[] = [];
     for (let ty = 0; ty < map.h; ty++) {
       for (let tx = 0; tx < map.w; tx++) {
         if (map.tiles[ty * map.w + tx] !== T.Forest) continue;
@@ -57,6 +63,7 @@ export class Trees {
           v: hash(tx, ty, 3) < 0.45 ? 1 : 0,
           s: 0.85 + hash(tx, ty, 4) * 0.4,
           r: hash(tx, ty, 5) * Math.PI * 2,
+          tile: ty * map.w + tx,
         });
       }
     }
@@ -93,6 +100,7 @@ export class Trees {
             mesh.setMatrixAt(i, m);
             const k = 0.88 + ((s.r * 7.3) % 0.24);
             mesh.setColorAt(i, tint.setRGB(k, k, k));
+            this.byTile.set(s.tile, { mesh, i, x: s.x, z: s.z });
           });
           mesh.castShadow = true;
           mesh.receiveShadow = true;
@@ -101,5 +109,28 @@ export class Trees {
         }
       }
     }
+    this.stumps = new THREE.InstancedMesh(STUMP(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 4096);
+    this.stumps.count = 0;
+    this.stumps.frustumCulled = false;
+    this.stumps.receiveShadow = true;
+    this.group.add(this.stumps);
+    this.terrainRef = terrain;
+  }
+
+  private terrainRef: Terrain;
+
+  /** 樹砍完：隱藏該棵樹、留下樹樁 */
+  remove(tx: number, ty: number): void {
+    const key = ty * this.mapW + tx;
+    const t = this.byTile.get(key);
+    if (!t) return;
+    this.byTile.delete(key);
+    t.mesh.setMatrixAt(t.i, new THREE.Matrix4().makeScale(0, 0, 0));
+    t.mesh.instanceMatrix.needsUpdate = true;
+    if (this.stumps.count < 4096) {
+      this.stumps.setMatrixAt(this.stumps.count++, new THREE.Matrix4().makeTranslation(t.x, this.terrainRef.heightAt(t.x, t.z) - 0.02, t.z));
+      this.stumps.instanceMatrix.needsUpdate = true;
+    }
+    this.count--;
   }
 }

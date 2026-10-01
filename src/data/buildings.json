@@ -1,0 +1,9 @@
+[
+  { "id": "town_hall", "name": "太守府", "w": 4, "h": 4, "hp": 2400, "cost": { "wood": 275, "stone": 100 }, "build": 150, "pop": 10, "drop": ["food", "wood", "gold", "stone"], "trains": ["villager"], "age": 2 },
+  { "id": "house", "name": "民居", "w": 2, "h": 2, "hp": 550, "cost": { "wood": 25 }, "build": 20, "pop": 5, "age": 1 },
+  { "id": "granary", "name": "糧倉", "w": 2, "h": 2, "hp": 1000, "cost": { "wood": 100 }, "build": 30, "drop": ["food"], "age": 1 },
+  { "id": "lumber_camp", "name": "伐木場", "w": 2, "h": 2, "hp": 1000, "cost": { "wood": 100 }, "build": 30, "drop": ["wood"], "age": 1 },
+  { "id": "mine_camp", "name": "礦場", "w": 2, "h": 2, "hp": 1000, "cost": { "wood": 100 }, "build": 30, "drop": ["gold", "stone"], "age": 1 },
+  { "id": "farm", "name": "農田", "w": 3, "h": 3, "hp": 480, "cost": { "wood": 60 }, "build": 15, "walkable": true, "food": 300, "age": 1 },
+  { "id": "barracks", "name": "兵營", "w": 3, "h": 3, "hp": 1200, "cost": { "wood": 175 }, "build": 50, "trains": ["swordsman", "spearman"], "age": 1 }
+]

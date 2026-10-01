@@ -1,0 +1,64 @@
+{
+  "start": {
+    "food": 200,
+    "wood": 200,
+    "gold": 100,
+    "stone": 150
+  },
+  "startVillagers": 4,
+  "popLimit": 125,
+  "carry": 10,
+  "queueMax": 15,
+  "farmReseedWood": 60,
+  "resources": [
+    {
+      "id": "tree",
+      "name": "樹",
+      "res": "wood",
+      "amount": 100,
+      "rate": 0.45,
+      "blocks": true
+    },
+    {
+      "id": "berry",
+      "name": "野果叢",
+      "res": "food",
+      "amount": 125,
+      "rate": 0.4,
+      "blocks": true
+    },
+    {
+      "id": "gold",
+      "name": "金礦",
+      "res": "gold",
+      "amount": 800,
+      "rate": 0.42,
+      "blocks": true
+    },
+    {
+      "id": "stone",
+      "name": "石礦",
+      "res": "stone",
+      "amount": 350,
+      "rate": 0.4,
+      "blocks": true
+    },
+    {
+      "id": "deer",
+      "name": "鹿",
+      "res": "food",
+      "amount": 100,
+      "rate": 0.5,
+      "blocks": false
+    },
+    {
+      "id": "boar",
+      "name": "野豬",
+      "res": "food",
+      "amount": 300,
+      "rate": 0.5,
+      "blocks": false
+    }
+  ],
+  "farmRate": 0.4
+}

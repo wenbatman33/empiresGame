@@ -1,12 +1,15 @@
 // 確定性模擬層入口（docs/07 §3）
 // 規則：只接受指令改變世界；每 tick 固定步驟；同種子 ＋ 同指令 → 同結果
 import type { Command, CommandInput } from './core/commands';
+import { BUILDING_DEFS, BUILDING_INDEX, ECONOMY, RESOURCE_KINDS, RK, UNIT_DEFS, UNIT_INDEX } from './core/defs';
+import { Buildings, Player, Resources } from './core/entities';
 import { FX_SHIFT, ONE, isqrt, tileCenter, toFx } from './core/fixed';
 import { Hasher } from './core/hash';
 import { Rng } from './core/rng';
-import { NAV, S, UNIT_DEFS, World } from './core/world';
+import { NAV, S, TASK, World } from './core/world';
 import { generateCentralPlains } from './map/generator';
-import type { MapGrid } from './map/grid';
+import { PASS_BLOCKED, T, basePass, type MapGrid } from './map/grid';
+import { EconomySystem } from './systems/economy';
 import { MovementSystem } from './systems/movement';
 import { Pathfinder, type FlowField } from './systems/pathfinding';
 
@@ -15,7 +18,17 @@ export interface SimOptions {
   mapSize?: number;
   /** 測試用：直接給地圖 */
   map?: MapGrid;
+  /** standard：每位玩家一座太守府 ＋ 民夫；empty：空地圖 */
+  start?: 'standard' | 'empty';
 }
+
+/** 給渲染與 UI 的事件（不影響模擬狀態，不算進雜湊） */
+export type SimEvent =
+  | { t: 'trained'; id: number; player: number }
+  | { t: 'resGone'; id: number; kind: number; tx: number; ty: number }
+  | { t: 'bPlaced'; id: number }
+  | { t: 'bComplete'; id: number }
+  | { t: 'bRemoved'; id: number; btype: number; tx: number; ty: number; owner: number };
 
 interface FlowEntry {
   field: FlowField;
@@ -31,9 +44,18 @@ export class Sim {
   readonly seed: number;
   readonly map: MapGrid;
   readonly world = new World();
+  readonly buildings = new Buildings();
+  readonly res = new Resources();
+  readonly players: Player[] = [];
   readonly rng: Rng;
   readonly pf: Pathfinder;
+  /** 每格上的資源點／建築 id（-1 ＝ 沒有） */
+  readonly resTile: Int32Array;
+  readonly bldTile: Int32Array;
+  /** 動物（不佔格的資源點） */
+  private readonly animals: number[] = [];
   private readonly movement: MovementSystem;
+  readonly economy: EconomySystem;
   private readonly flows = new Map<number, FlowEntry>();
   private readonly flowByKey = new Map<number, number>();
   private nextFlow = 1;
@@ -42,6 +64,8 @@ export class Sim {
   private pending: Command[] = [];
   /** 已執行的指令（含實際 tick），重播 ＝ 種子 ＋ 這份紀錄 */
   readonly history: Command[] = [];
+  /** 渲染與 UI 讀完要自己清空 */
+  readonly events: SimEvent[] = [];
   /** 最近一次建立的 Flow Field（DEV 疊加層顯示用） */
   lastFlow: FlowField | null = null;
   readonly stats = { flowBuilds: 0, paths: 0 };
@@ -51,7 +75,42 @@ export class Sim {
     this.rng = new Rng(this.seed);
     this.map = opts.map ?? generateCentralPlains(this.seed, opts.mapSize ?? 128);
     this.pf = new Pathfinder(this.map);
+    this.resTile = new Int32Array(this.map.w * this.map.h).fill(-1);
+    this.bldTile = new Int32Array(this.map.w * this.map.h).fill(-1);
     this.movement = new MovementSystem(this);
+    this.economy = new EconomySystem(this);
+    const nPlayers = Math.max(2, this.map.starts.length);
+    for (let p = 0; p < nPlayers; p++) this.players.push(new Player(ECONOMY.start));
+    this.createResources();
+    if ((opts.start ?? (opts.map ? 'empty' : 'standard')) === 'standard') this.standardStart();
+  }
+
+  /** 森林格 → 樹；地圖產生器的資源點 → 野果、金、石、動物 */
+  private createResources(): void {
+    const m = this.map;
+    for (let i = 0; i < m.w * m.h; i++) if (m.tiles[i] === T.Forest) this.addResource(RK.tree, i % m.w, Math.floor(i / m.w));
+    for (const s of m.resourceSpots) this.addResource(s.kind, s.tx, s.ty);
+  }
+
+  private addResource(kind: number, tx: number, ty: number): number {
+    const r = this.res.add(kind, tx, ty);
+    if (RESOURCE_KINDS[kind].blocks) {
+      const i = this.map.idx(tx, ty);
+      this.resTile[i] = r;
+      this.refreshPass(i);
+    } else {
+      this.animals.push(r);
+    }
+    return r;
+  }
+
+  private standardStart(): void {
+    const th = BUILDING_INDEX.town_hall;
+    this.map.starts.forEach((s, p) => {
+      const b = this.placeBuilding(th, p, s.x - 2, s.y - 2, true);
+      for (let k = 0; k < ECONOMY.startVillagers; k++) this.spawnFromBuilding(b, UNIT_INDEX.villager);
+    });
+    this.economy.step();
   }
 
   /** 排程指令：預設在下一次 step 執行 */
@@ -73,6 +132,7 @@ export class Sim {
         this.apply(c);
       }
     }
+    this.economy.step();
     this.movement.step();
     this.tick++;
   }
@@ -83,8 +143,16 @@ export class Sim {
     const h = new Hasher().add(this.tick).add(w.high).add(w.count);
     for (let id = 0; id < w.high; id++) {
       if (!w.alive[id]) continue;
-      h.add(id).add(w.owner[id]).add(w.utype[id]).add(w.state[id]).add(w.x[id]).add(w.y[id]).add(w.hp[id]);
+      h.add(id).add(w.owner[id]).add(w.utype[id]).add(w.state[id]).add(w.x[id]).add(w.y[id]).add(w.hp[id]).add(w.task[id]).add(w.carry[id]);
     }
+    const bs = this.buildings;
+    for (let b = 0; b < bs.high; b++) {
+      if (!bs.alive[b]) continue;
+      h.add(b).add(bs.owner[b]).add(bs.btype[b]).add(bs.hp[b]).add(bs.progress[b]).add(bs.queue[b].length).add(bs.food[b]);
+    }
+    const rs = this.res;
+    for (let r = 0; r < rs.high; r++) if (rs.alive[r]) h.add(r).add(rs.amount[r]);
+    for (const p of this.players) h.addArray(p.res).add(p.pop).add(p.popCap);
     h.addArray(this.rng.getState());
     return h.value();
   }
@@ -97,20 +165,26 @@ export class Sim {
         this.cmdSpawn(c.player, c.unit, c.x, c.y, c.count);
         break;
       case 'move':
+        for (const id of this.ownedIds(c.player, c.ids)) this.economy.clearTask(id);
         this.cmdMove(c.player, c.ids, c.x, c.y);
         break;
       case 'stop':
-        for (const id of this.ownedIds(c.player, c.ids)) this.arrive(id);
+        for (const id of this.ownedIds(c.player, c.ids)) {
+          this.economy.clearTask(id);
+          this.arrive(id);
+        }
         break;
       case 'clear':
         for (let id = 0; id < this.world.high; id++) if (this.world.alive[id]) this.releaseNav(id);
         this.world.clear();
         this.groups.clear();
         break;
+      default:
+        this.economy.apply(c);
     }
   }
 
-  private ownedIds(player: number, ids: number[]): number[] {
+  ownedIds(player: number, ids: number[]): number[] {
     const w = this.world;
     const out = ids.filter((id) => id >= 0 && id < w.high && w.alive[id] && w.owner[id] === player && w.state[id] !== S.Dead);
     out.sort((a, b) => a - b);
@@ -119,7 +193,7 @@ export class Sim {
 
   /** 在 (x,y) 附近以 0.7 格間距由內往外排開 */
   private cmdSpawn(player: number, unit: number, x: number, y: number, count: number): void {
-    if (unit < 0 || unit >= UNIT_DEFS.length) return;
+    if (unit < 0 || unit >= UNIT_DEFS.length || player < 0 || player >= this.players.length) return;
     const [ctx, cty] = this.pf.nearestWalkable(x >> FX_SHIFT, y >> FX_SHIFT);
     const cx = tileCenter(ctx);
     const cy = tileCenter(cty);
@@ -143,6 +217,8 @@ export class Sim {
     const w = this.world;
     const ids = this.ownedIds(player, rawIds);
     if (!ids.length) return;
+    x = Math.max(0, Math.min(this.map.widthFx - 1, x));
+    y = Math.max(0, Math.min(this.map.heightFx - 1, y));
     const exact = this.map.walkableFx(x, y);
     const [gtx, gty] = this.pf.nearestWalkable(x >> FX_SHIFT, y >> FX_SHIFT);
     const gx = exact ? x : tileCenter(gtx);
@@ -160,10 +236,7 @@ export class Sim {
       w.goalY[id] = sy;
       w.group[id] = group;
       w.stuck[id] = 0;
-      if (w.state[id] !== S.Move) {
-        w.state[id] = S.Move;
-        w.stateTick[id] = this.tick;
-      }
+      this.setState(id, S.Move);
       const dx = sx - w.x[id];
       const dy = sy - w.y[id];
       if (dx * dx + dy * dy < 16 * ONE * ONE && this.pf.los(w.x[id], w.y[id], sx, sy)) {
@@ -246,7 +319,38 @@ export class Sim {
     return out;
   }
 
-  // ───────── 導航狀態（移動系統也會呼叫） ─────────
+  // ───────── 單位導航（經濟系統也會呼叫） ─────────
+
+  private setState(id: number, st: number): void {
+    const w = this.world;
+    if (w.state[id] !== st) {
+      w.state[id] = st;
+      w.stateTick[id] = this.tick;
+    }
+  }
+
+  /** 單一單位走到 (x,y)，保留工作任務 */
+  moveUnit(id: number, x: number, y: number): void {
+    const w = this.world;
+    this.releaseNav(id);
+    x = Math.max(0, Math.min(this.map.widthFx - 1, x));
+    y = Math.max(0, Math.min(this.map.heightFx - 1, y));
+    w.goalX[id] = x;
+    w.goalY[id] = y;
+    // 每個單位自己一組，不會被別人「碰到就停」
+    w.group[id] = -1 - id;
+    w.stuck[id] = 0;
+    this.setState(id, S.Move);
+    const dx = x - w.x[id];
+    const dy = y - w.y[id];
+    if (dx * dx + dy * dy < 16 * ONE * ONE && this.pf.los(w.x[id], w.y[id], x, y)) w.nav[id] = NAV.Direct;
+    else this.setPath(id, this.pf.findPath(w.x[id], w.y[id], x, y));
+  }
+
+  stopMoving(id: number): void {
+    this.releaseNav(id);
+    if (this.world.state[id] === S.Move) this.setState(id, S.Idle);
+  }
 
   setPath(id: number, path: Int32Array): void {
     const w = this.world;
@@ -263,10 +367,7 @@ export class Sim {
   arrive(id: number): void {
     const w = this.world;
     this.releaseNav(id);
-    if (w.state[id] !== S.Idle) {
-      w.state[id] = S.Idle;
-      w.stateTick[id] = this.tick;
-    }
+    if (w.state[id] !== S.Idle && w.state[id] !== S.Work) this.setState(id, S.Idle);
     w.stuck[id] = 0;
   }
 
@@ -316,5 +417,232 @@ export class Sim {
 
   get activeFlows(): number {
     return this.flows.size;
+  }
+
+  // ───────── 地圖佔用 ─────────
+
+  /** 依地形、建築、資源重算一格的通行性 */
+  refreshPass(i: number): void {
+    let p = basePass(this.map.tiles[i]);
+    const b = this.bldTile[i];
+    if (b >= 0 && !BUILDING_DEFS[this.buildings.btype[b]].walkable) p = PASS_BLOCKED;
+    if (this.resTile[i] >= 0) p = PASS_BLOCKED;
+    this.map.pass[i] = p;
+  }
+
+  /** 能不能在 (tx,ty) 放這種建築（左上角） */
+  canPlace(btype: number, tx: number, ty: number): boolean {
+    const def = BUILDING_DEFS[btype];
+    if (!def) return false;
+    const m = this.map;
+    for (let y = ty; y < ty + def.h; y++) {
+      for (let x = tx; x < tx + def.w; x++) {
+        if (!m.inBounds(x, y)) return false;
+        const i = m.idx(x, y);
+        const t = m.tiles[i];
+        if (t !== T.Grass && t !== T.Dirt && t !== T.Sand) return false;
+        if (this.resTile[i] >= 0 || this.bldTile[i] >= 0) return false;
+      }
+    }
+    return true;
+  }
+
+  placeBuilding(btype: number, owner: number, tx: number, ty: number, complete: boolean): number {
+    const def = BUILDING_DEFS[btype];
+    const b = this.buildings.add(btype, owner, tx, ty, complete, this.tick);
+    const m = this.map;
+    for (let y = ty; y < ty + def.h; y++) {
+      for (let x = tx; x < tx + def.w; x++) {
+        const i = m.idx(x, y);
+        this.bldTile[i] = b;
+        this.refreshPass(i);
+      }
+    }
+    if (!def.walkable) {
+      m.passVersion++;
+      // 站在地基上的單位推到旁邊
+      const w = this.world;
+      for (let id = 0; id < w.high; id++) {
+        if (!w.alive[id] || m.walkableFx(w.x[id], w.y[id])) continue;
+        const [nx, ny] = this.pf.nearestWalkable(w.x[id] >> FX_SHIFT, w.y[id] >> FX_SHIFT);
+        w.x[id] = w.px[id] = tileCenter(nx);
+        w.y[id] = w.py[id] = tileCenter(ny);
+      }
+    }
+    this.events.push({ t: 'bPlaced', id: b });
+    if (complete) this.events.push({ t: 'bComplete', id: b });
+    return b;
+  }
+
+  completeBuilding(b: number): void {
+    const bs = this.buildings;
+    bs.complete[b] = 1;
+    this.events.push({ t: 'bComplete', id: b });
+    const w = this.world;
+    for (let id = 0; id < w.high; id++) {
+      if (w.alive[id] && w.task[id] === TASK.Build && w.target[id] === b) this.economy.afterBuilt(id, b);
+    }
+  }
+
+  removeBuilding(b: number): void {
+    const bs = this.buildings;
+    if (!bs.alive[b]) return;
+    const def = BUILDING_DEFS[bs.btype[b]];
+    const m = this.map;
+    const tx = bs.tx[b];
+    const ty = bs.ty[b];
+    for (let y = ty; y < ty + def.h; y++) {
+      for (let x = tx; x < tx + def.w; x++) {
+        const i = m.idx(x, y);
+        if (this.bldTile[i] === b) this.bldTile[i] = -1;
+        this.refreshPass(i);
+      }
+    }
+    if (!def.walkable) m.passVersion++;
+    this.events.push({ t: 'bRemoved', id: b, btype: bs.btype[b], tx, ty, owner: bs.owner[b] });
+    bs.farmer[b] = -1;
+    bs.remove(b);
+  }
+
+  /** 農田耗盡：自動重播（付木材），付不起就消失 */
+  exhaustFarm(b: number): void {
+    const bs = this.buildings;
+    const pl = this.players[bs.owner[b]];
+    const wood = ECONOMY.farmReseedWood;
+    if (pl.autoReseed && pl.res[1] >= wood) {
+      pl.res[1] -= wood;
+      bs.food[b] = BUILDING_DEFS[bs.btype[b]].food;
+    } else {
+      this.removeBuilding(b);
+    }
+  }
+
+  depleteResource(r: number): void {
+    const rs = this.res;
+    if (!rs.alive[r]) return;
+    const kind = rs.kind[r];
+    const tx = rs.tx[r];
+    const ty = rs.ty[r];
+    if (RESOURCE_KINDS[kind].blocks) {
+      const i = this.map.idx(tx, ty);
+      if (this.resTile[i] === r) this.resTile[i] = -1;
+      if (this.map.tiles[i] === T.Forest) this.map.tiles[i] = T.Grass;
+      this.refreshPass(i);
+      this.map.passVersion++;
+    } else {
+      const k = this.animals.indexOf(r);
+      if (k >= 0) this.animals.splice(k, 1);
+    }
+    rs.remove(r);
+    this.events.push({ t: 'resGone', id: r, kind, tx, ty });
+  }
+
+  /** 找最近的存放點（收這種資源、已完工、自己的） */
+  nearestDrop(player: number, resType: number, x: number, y: number, exclude = -1): number {
+    const bs = this.buildings;
+    let best = -1;
+    let bestD = Infinity;
+    for (let b = 0; b < bs.high; b++) {
+      if (b === exclude || !bs.alive[b] || !bs.complete[b] || bs.owner[b] !== player) continue;
+      if (!BUILDING_DEFS[bs.btype[b]].drop[resType]) continue;
+      const dx = bs.centerX(b) - x;
+      const dy = bs.centerY(b) - y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  /** 以 (cx,cy) 為中心找指定種類的資源，回傳離單位 (ux,uy) 最近的；樹要「露在外面」才算 */
+  findResource(kinds: number[], cx: number, cy: number, radius: number, ux: number, uy: number, exclude = -1): number {
+    const m = this.map;
+    const rs = this.res;
+    const ctx = cx >> FX_SHIFT;
+    const cty = cy >> FX_SHIFT;
+    let best = -1;
+    let bestD = Infinity;
+    const consider = (r: number) => {
+      const dx = rs.x[r] - ux;
+      const dy = rs.y[r] - uy;
+      const d = dx * dx + dy * dy;
+      if (d < bestD || (d === bestD && r < best)) {
+        bestD = d;
+        best = r;
+      }
+    };
+    for (let rr = 0; rr <= radius && best < 0; rr++) {
+      for (let y = cty - rr; y <= cty + rr; y++) {
+        for (let x = ctx - rr; x <= ctx + rr; x++) {
+          if (Math.max(Math.abs(x - ctx), Math.abs(y - cty)) !== rr || !m.inBounds(x, y)) continue;
+          const r = this.resTile[m.idx(x, y)];
+          if (r < 0 || r === exclude || !kinds.includes(rs.kind[r])) continue;
+          if (!m.walkable(x + 1, y) && !m.walkable(x - 1, y) && !m.walkable(x, y + 1) && !m.walkable(x, y - 1)) continue;
+          consider(r);
+        }
+      }
+    }
+    const lim = radius * ONE;
+    for (const r of this.animals) {
+      if (r === exclude || !rs.alive[r] || !kinds.includes(rs.kind[r])) continue;
+      const dx = rs.x[r] - cx;
+      const dy = rs.y[r] - cy;
+      if (dx * dx + dy * dy <= lim * lim) consider(r);
+    }
+    return best;
+  }
+
+  /** 從建築旁生出單位，並依集結點派工 */
+  spawnFromBuilding(b: number, utype: number): number {
+    const bs = this.buildings;
+    const def = BUILDING_DEFS[bs.btype[b]];
+    const m = this.map;
+    const tx = bs.tx[b];
+    const ty = bs.ty[b];
+    // 目標：集結點，沒有就朝地圖中心
+    const gx = bs.rallyX[b] >= 0 ? bs.rallyX[b] : m.widthFx >> 1;
+    const gy = bs.rallyY[b] >= 0 ? bs.rallyY[b] : m.heightFx >> 1;
+    let best = -1;
+    let bestD = Infinity;
+    for (let y = ty - 1; y <= ty + def.h; y++) {
+      for (let x = tx - 1; x <= tx + def.w; x++) {
+        if (x >= tx && x < tx + def.w && y >= ty && y < ty + def.h) continue;
+        if (!m.walkable(x, y)) continue;
+        const dx = tileCenter(x) - gx;
+        const dy = tileCenter(y) - gy;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = m.idx(x, y);
+        }
+      }
+    }
+    let sx: number;
+    let sy: number;
+    if (best >= 0) {
+      sx = tileCenter(best % m.w);
+      sy = tileCenter(Math.floor(best / m.w));
+    } else {
+      const [nx, ny] = this.pf.nearestWalkable(tx + (def.w >> 1), ty + def.h);
+      sx = tileCenter(nx);
+      sy = tileCenter(ny);
+    }
+    const owner = bs.owner[b];
+    const id = this.world.spawn(utype, owner, sx, sy, this.tick);
+    const w = this.world;
+    w.fx[id] = gx - sx;
+    w.fy[id] = gy - sy;
+    const rr = bs.rallyRes[b];
+    if (rr >= 0 && this.res.alive[rr] && UNIT_DEFS[utype].worker) {
+      this.economy.setTask(id, TASK.Gather, rr);
+      w.lastKind[id] = this.res.kind[rr];
+      w.lastX[id] = this.res.x[rr];
+      w.lastY[id] = this.res.y[rr];
+    } else if (bs.rallyX[b] >= 0) {
+      this.moveUnit(id, bs.rallyX[b], bs.rallyY[b]);
+    }
+    return id;
   }
 }

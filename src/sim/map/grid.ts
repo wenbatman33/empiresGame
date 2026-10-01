@@ -23,6 +23,11 @@ export const HEIGHT_UNIT = 64;
 /** 水面高度（高度單位） */
 export const WATER_LEVEL = 40;
 
+/** 地形本身的通行性（不含建築、資源） */
+export function basePass(t: number): number {
+  return t === T.Deep || t === T.Forest ? PASS_BLOCKED : t === T.Shallow ? PASS_SHALLOW : PASS_LAND;
+}
+
 export class MapGrid {
   readonly tiles: Uint8Array;
   readonly pass: Uint8Array;
@@ -30,6 +35,8 @@ export class MapGrid {
   readonly heights: Int16Array;
   /** 玩家起始點（格子座標） */
   starts: { x: number; y: number }[] = [];
+  /** 地圖產生器放的資源點（樹木另由森林格產生） */
+  resourceSpots: { kind: number; tx: number; ty: number }[] = [];
   /** 通行性改變時遞增（建築蓋好、樹被砍），讓尋路快取失效 */
   passVersion = 0;
 
@@ -59,7 +66,7 @@ export class MapGrid {
   setTile(tx: number, ty: number, t: TileType): void {
     const i = this.idx(tx, ty);
     this.tiles[i] = t;
-    this.pass[i] = t === T.Deep || t === T.Forest ? PASS_BLOCKED : t === T.Shallow ? PASS_SHALLOW : PASS_LAND;
+    this.pass[i] = basePass(t);
   }
 
   /** 該格移速倍率（十分比） */

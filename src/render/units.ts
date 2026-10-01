@@ -95,7 +95,7 @@ export class UnitRenderer {
 
       // 動畫
       const st = w.state[id];
-      const name: AnimName = this.forceAnim ?? (st === S.Move ? 'walk' : st === S.Dead ? 'die' : 'idle');
+      const name: AnimName = this.forceAnim ?? (st === S.Move ? 'walk' : st === S.Dead ? 'die' : st === S.Work ? 'work' : 'idle');
       const tm = this.types[w.utype[id]];
       const row = tm.baked.anims[name];
       const animIdx = row.row;

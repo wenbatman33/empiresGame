@@ -239,8 +239,8 @@ body {
 /* ───────── DEV ───────── */
 #dev-fps {
   position: fixed;
-  right: 8px;
-  top: 6px;
+  right: 56px;
+  bottom: 18px;
   font: 11px/1.3 ui-monospace, Menlo, monospace;
   color: #b8ffb0;
   background: rgba(0, 0, 0, 0.55);
@@ -282,4 +282,160 @@ body {
   color: #00e5ff;
   background: rgba(0, 0, 0, 0.6);
   padding: 0 3px;
+}
+
+/* ───────── M1：指令卡、選取面板細節 ───────── */
+.top-row .warn,
+.sel-body .warn {
+  color: #ff8a7a;
+  font-weight: 700;
+}
+.hud-cards {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  overflow: visible;
+}
+#hud[data-layout='mobile'] .hud-cards {
+  grid-template-columns: repeat(4, 1fr);
+}
+.card-btn {
+  position: relative;
+  font: inherit;
+  color: var(--paper);
+  background: rgba(42, 31, 22, 0.9);
+  border: 2px solid rgba(232, 196, 106, 0.55);
+  border-radius: 10px;
+  padding: 2px 2px 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  min-width: 0;
+  overflow: hidden;
+}
+.card-btn .ico {
+  font-size: 1.9em;
+  line-height: 1;
+}
+.card-btn .lbl {
+  font-size: 0.95em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.card-btn .cost {
+  font-size: 0.78em;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+.card-btn .hk {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  font: 700 0.75em ui-monospace, monospace;
+  color: var(--gold);
+}
+.card-btn .badge,
+.hud-btn .badge {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  min-width: 1.4em;
+  padding: 0 3px;
+  border-radius: 99px;
+  background: #d63a3a;
+  color: #fff;
+  font-size: 0.8em;
+  font-weight: 700;
+}
+.card-btn.off {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+}
+.card-btn.on {
+  background: #8a5a2b;
+  border-color: var(--gold);
+}
+.card-btn.danger {
+  border-color: rgba(255, 120, 100, 0.6);
+}
+.card-btn:active {
+  transform: scale(0.96);
+}
+.hud-btn {
+  position: relative;
+}
+.hud-btn.blink {
+  animation: blink 1s infinite;
+}
+@keyframes blink {
+  50% {
+    border-color: #ffd43b;
+    box-shadow: 0 0 10px rgba(255, 212, 59, 0.7);
+  }
+}
+.hud-placebar {
+  display: flex;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.hud-placebar .hud-btn {
+  flex: 1;
+}
+.hud-placebar .hud-btn.ok {
+  flex: 2.4;
+  background: #2f7a3a;
+}
+.sel-one .big {
+  font-size: 2.2em;
+  line-height: 1;
+}
+.sel-one .grow {
+  flex: 1;
+  min-width: 0;
+}
+.sel-one .sub,
+.sel-body .sub {
+  opacity: 0.8;
+  font-size: 0.88em;
+}
+.hpline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+}
+.queue {
+  display: flex;
+  gap: 3px;
+  margin-top: 3px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.qi {
+  position: relative;
+  font-size: 1.1em;
+  width: 1.9em;
+  height: 1.9em;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(232, 196, 106, 0.5);
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.qi i {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: #8fe36b;
 }

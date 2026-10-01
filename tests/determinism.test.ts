@@ -4,7 +4,7 @@ import { ONE, tileCenter } from '../src/sim/core/fixed';
 import { Sim } from '../src/sim/sim';
 
 function runScenario(seed: number): number[] {
-  const sim = new Sim({ seed });
+  const sim = new Sim({ seed, start: 'empty' });
   const [a, b] = sim.map.starts;
   sim.issue({ t: 'spawn', player: 0, unit: 2, x: tileCenter(a.x), y: tileCenter(a.y), count: 120 });
   sim.issue({ t: 'spawn', player: 1, unit: 3, x: tileCenter(b.x), y: tileCenter(b.y), count: 120 });
@@ -40,7 +40,7 @@ describe('確定性', () => {
   });
 
   it('重播：用指令紀錄重跑，結果和原本一致', () => {
-    const sim = new Sim({ seed: 42 });
+    const sim = new Sim({ seed: 42, start: 'empty' });
     const [a] = sim.map.starts;
     sim.issue({ t: 'spawn', player: 0, unit: 1, x: tileCenter(a.x), y: tileCenter(a.y), count: 50 });
     for (let t = 0; t < 300; t++) {
@@ -48,7 +48,7 @@ describe('確定性', () => {
       if (t === 120) sim.issue({ t: 'move', player: 0, ids: range(0, 25), x: 30 * ONE, y: 90 * ONE });
       sim.step();
     }
-    const replay = new Sim({ seed: 42 });
+    const replay = new Sim({ seed: 42, start: 'empty' });
     for (const c of sim.history) replay.issue({ ...c }, c.tick - replay.tick);
     for (let t = 0; t < 300; t++) replay.step();
     expect(replay.hash()).toBe(sim.hash());

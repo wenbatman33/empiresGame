@@ -1,15 +1,20 @@
-// HUD：資源列、小地圖、選取面板、左側按鈕、框選框、提示訊息
+// HUD：資源列、小地圖、選取面板、左側按鈕、指令卡、放置確認列、框選框、提示訊息
 // 版面數值來自 layout.ts，DEV 工具可直接拖曳
 import { PLAYER_COLORS } from '../config';
-import { UNIT_DEFS } from '../sim/core/world';
+import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, UNIT_DEFS } from '../sim/core/defs';
+import { S, TASK } from '../sim/core/world';
 import type { Game } from '../game';
+import { BUILD_ICONS, CommandCard, UNIT_ICONS } from './commandCard';
 import { applyBox, HUD_KEYS, LAYOUTS, type HudKey } from './layout';
 
-const AGE_NAMES = ['黃巾亂世', '群雄割據', '三分天下', '天下一統'];
+const AGE_NAMES = ['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'];
+const RES_ICONS = ['🌾', '🪵', '🪙', '🪨'];
+const MINI_RES: Record<string, string> = { gold: '#ffd43b', stone: '#c9c5bd', berry: '#e0405a', deer: '#c98b4e', boar: '#5a463a' };
 
 export class Hud {
   readonly root: HTMLElement;
   readonly els = {} as Record<HudKey, HTMLElement>;
+  readonly card: CommandCard;
   private boxEl: HTMLElement;
   private toastEl: HTMLElement;
   private topText: HTMLElement;
@@ -19,21 +24,21 @@ export class Hud {
   private miniTerrain: HTMLCanvasElement;
   private miniTimer = 0;
   private selSig = '';
+  private topSig = '';
   private toastTimer = 0;
   private boxBtn: HTMLButtonElement;
+  private idleBtn: HTMLButtonElement;
 
   constructor(container: HTMLElement, private game: Game) {
     this.root = document.createElement('div');
     this.root.id = 'hud';
     container.appendChild(this.root);
 
-    // 資源列
     const top = this.panel('topbar');
     this.topText = document.createElement('div');
     this.topText.className = 'top-row';
     top.appendChild(this.topText);
 
-    // 小地圖
     const mm = this.panel('minimap');
     this.mini = document.createElement('canvas');
     mm.appendChild(this.mini);
@@ -41,22 +46,29 @@ export class Hud {
     this.miniTerrain = this.buildMiniTerrain();
     this.bindMinimap();
 
-    // 選取面板
     const sel = this.panel('selection');
     this.selBody = document.createElement('div');
     this.selBody.className = 'sel-body';
     sel.appendChild(this.selBody);
 
-    // 左側按鈕
     const lb = this.panel('leftbar');
     this.boxBtn = this.button(lb, '框選', '框選模式：單指拖曳就是框選', () => {
       game.controls.boxToggle = !game.controls.boxToggle;
       this.boxBtn.classList.toggle('on', game.controls.boxToggle);
     });
-    this.button(lb, '閒置', '選取閒置的民夫（PC：. 鍵）', () => game.selectIdleVillager());
+    this.idleBtn = this.button(lb, '閒置', '選取閒置的民夫（PC：. 鍵）', () => game.selectIdleVillager());
     this.button(lb, '全軍', '選取所有我方軍隊', () => game.selectArmy());
-    this.button(lb, '回城', '鏡頭回到起始點（PC：H 鍵）', () => game.goHome());
+    this.button(lb, '回城', '鏡頭回到太守府（PC：H 鍵）', () => game.goHome());
     this.button(lb, '取消', '取消選取（PC：Esc）', () => game.clearSelection());
+
+    const cards = this.panel('cards');
+    cards.classList.add('cards');
+    this.card = new CommandCard(cards, game);
+
+    const pb = this.panel('placebar');
+    pb.classList.add('placebar');
+    this.button(pb, '✔ 蓋這裡', '確定放置', () => game.confirmPlacing(false)).classList.add('ok');
+    this.button(pb, '✕', '取消放置', () => game.cancelPlacing());
 
     this.boxEl = document.createElement('div');
     this.boxEl.className = 'sel-box';
@@ -71,6 +83,7 @@ export class Hud {
     this.root.appendChild(rot);
 
     this.applyLayout();
+    window.addEventListener('resize', () => this.applyLayout());
   }
 
   private panel(key: HudKey): HTMLElement {
@@ -85,7 +98,7 @@ export class Hud {
   private button(parent: HTMLElement, label: string, title: string, fn: () => void): HTMLButtonElement {
     const b = document.createElement('button');
     b.className = 'hud-btn';
-    b.textContent = label;
+    b.innerHTML = `<span>${label}</span>`;
     b.title = title;
     b.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -102,6 +115,8 @@ export class Hud {
     this.boxBtn.style.display = this.game.layoutMode === 'pc' ? 'none' : '';
     this.resizeMinimap();
     this.selSig = '';
+    this.topSig = '';
+    this.card.reset();
   }
 
   private resizeMinimap(): void {
@@ -132,26 +147,13 @@ export class Hud {
   }
 
   update(dt: number): void {
-    const g = this.game;
-    const sim = g.sim;
-    const w = sim.world;
-    let pop = 0;
-    for (let id = 0; id < w.high; id++) if (w.alive[id] && w.owner[id] === g.myPlayer) pop++;
-    const sec = Math.floor(sim.tick / 10);
-    const time = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
-    const compact = g.layoutMode === 'mobile';
-    this.topText.innerHTML = [
-      `<span>🌾${compact ? '' : ' 糧'} 200</span>`,
-      `<span>🪵${compact ? '' : ' 木'} 200</span>`,
-      `<span>🪙${compact ? '' : ' 金'} 100</span>`,
-      `<span>🪨${compact ? '' : ' 石'} 150</span>`,
-      `<span>👥 ${pop}/125</span>`,
-      `<span class="age">${AGE_NAMES[0]}</span>`,
-      `<span>⏱ ${time}</span>`,
-      g.paused ? '<span class="paused">暫停</span>' : '',
-    ].join('');
-
+    this.updateTop();
     this.updateSelection();
+    this.card.update();
+    // 放置確認列：觸控版面才需要（PC 直接點地面）
+    const pb = this.els.placebar;
+    const showPb = !!this.game.placing && this.game.layoutMode !== 'pc' && LAYOUTS[this.game.layoutMode].placebar.visible;
+    pb.style.display = showPb ? '' : 'none';
     this.miniTimer -= dt;
     if (this.miniTimer <= 0) {
       this.miniTimer = 0.2;
@@ -159,43 +161,122 @@ export class Hud {
     }
   }
 
+  private updateTop(): void {
+    const g = this.game;
+    const sim = g.sim;
+    const pl = sim.players[g.myPlayer];
+    const sec = Math.floor(sim.tick / 10);
+    const time = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+    const w = sim.world;
+    let idle = 0;
+    for (let id = 0; id < w.high; id++) {
+      if (w.alive[id] && w.owner[id] === g.myPlayer && UNIT_DEFS[w.utype[id]].worker && w.task[id] === TASK.None && w.state[id] === S.Idle) idle++;
+    }
+    const sig = `${pl.res.join(',')}|${pl.pop}/${pl.popCap}|${pl.housed}|${pl.age}|${time}|${g.paused}|${g.layoutMode}|${idle}`;
+    if (sig === this.topSig) return;
+    this.topSig = sig;
+    const compact = g.layoutMode === 'mobile';
+    const popCls = pl.housed ? ' class="warn"' : '';
+    this.topText.innerHTML = [
+      ...pl.res.map((v, i) => `<span>${RES_ICONS[i]}${compact ? '' : ` ${RES_NAMES[i]}`} ${v}</span>`),
+      `<span${popCls}>👥 ${pl.pop}/${pl.popCap}</span>`,
+      `<span class="age">${AGE_NAMES[pl.age]}</span>`,
+      `<span>⏱ ${time}</span>`,
+      g.paused ? '<span class="warn">暫停</span>' : '',
+    ].join('');
+    this.idleBtn.innerHTML = `<span>閒置</span>${idle ? `<b class="badge">${idle}</b>` : ''}`;
+    this.idleBtn.classList.toggle('blink', idle > 0);
+  }
+
   private updateSelection(): void {
     const g = this.game;
-    const w = g.sim.world;
-    const counts = new Map<number, number>();
-    let owner = -1;
-    let single = -1;
-    for (const id of g.selected) {
-      counts.set(w.utype[id], (counts.get(w.utype[id]) ?? 0) + 1);
-      owner = w.owner[id];
-      single = id;
-    }
-    const sig = `${g.selected.size}|${[...counts].join(',')}|${single >= 0 ? w.hp[single] : ''}|${g.layoutMode}`;
-    if (sig === this.selSig) return;
-    this.selSig = sig;
-    if (!g.selected.size) {
-      this.selBody.innerHTML =
+    const sim = g.sim;
+    const w = sim.world;
+    const bs = sim.buildings;
+    const rs = sim.res;
+    let html = '';
+    let sig = `${g.layoutMode}|`;
+    if (g.placing) {
+      const def = BUILDING_DEFS[g.placing.btype];
+      sig += `place${g.placing.btype}${g.placing.valid}`;
+      if (sig === this.selSig) return;
+      html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div><b>放置${def.name}</b><div class="sub">${g.placing.valid ? (g.layoutMode === 'pc' ? '左鍵放置 · Shift 連續放 · 右鍵取消' : '點地面移動位置，再按「蓋這裡」') : '這裡不能蓋'}</div></div></div>`;
+    } else if (g.rallyMode) {
+      sig += 'rally';
+      if (sig === this.selSig) return;
+      html = '<div class="hint">點地面或資源設定集結點</div>';
+    } else if (g.selected.size) {
+      const counts = new Map<number, number>();
+      let owner = -1;
+      let single = -1;
+      for (const id of g.selected) {
+        counts.set(w.utype[id], (counts.get(w.utype[id]) ?? 0) + 1);
+        owner = w.owner[id];
+        single = id;
+      }
+      const color = PLAYER_COLORS[owner] ?? '#fff';
+      if (g.selected.size === 1) {
+        const def = UNIT_DEFS[w.utype[single]];
+        const pct = Math.max(0, Math.min(100, (w.hp[single] / def.hp) * 100));
+        const task = w.task[single];
+        const doing = w.carry[single] > 0 ? `帶著 ${w.carry[single]} ${RES_NAMES[w.carryRes[single]]}` : task === TASK.Build ? '建造中' : task === TASK.Farm ? '耕田中' : task === TASK.Gather ? '採集中' : w.state[single] === S.Move ? '移動中' : '閒置';
+        sig += `one${single}|${w.hp[single]}|${doing}`;
+        if (sig === this.selSig) return;
+        html = `<div class="sel-one"><span class="big">${UNIT_ICONS[def.id] ?? '👤'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b> <span class="sub">${doing}</span></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${w.hp[single]}/${def.hp}</span></div></div></div>`;
+      } else {
+        const list = [...counts].sort((a, b) => a[0] - b[0]);
+        sig += `many${g.selected.size}|${list.join(',')}`;
+        if (sig === this.selSig) return;
+        const chips = list.map(([t, n]) => `<button class="chip" data-type="${t}">${UNIT_ICONS[UNIT_DEFS[t].id] ?? ''}${UNIT_DEFS[t].name} ×${n}</button>`).join('');
+        html = `<div class="sel-many"><span class="dot" style="background:${color}"></span><b>${g.selected.size} 名</b>${chips}</div>`;
+      }
+    } else if (g.selBuilding >= 0 && bs.alive[g.selBuilding]) {
+      const b = g.selBuilding;
+      const def = BUILDING_DEFS[bs.btype[b]];
+      const color = PLAYER_COLORS[bs.owner[b]];
+      const pct = Math.round((bs.hp[b] / def.hp) * 100);
+      const prog = bs.complete[b] ? 100 : Math.floor((bs.progress[b] / (def.buildTicks * 3)) * 100);
+      const q = bs.queue[b];
+      const qp = q.length ? Math.floor((bs.qProgress[b] / UNIT_DEFS[q[0]].trainTicks) * 100) : 0;
+      const pl = sim.players[bs.owner[b]];
+      sig += `b${b}|${bs.hp[b]}|${prog}|${q.join(',')}|${qp}|${bs.food[b]}|${pl.housed}`;
+      if (sig === this.selSig) return;
+      let extra = '';
+      if (!bs.complete[b]) extra = `<div class="sub">建造中 ${prog}%</div>`;
+      else if (def.id === 'farm') extra = `<div class="sub">剩餘 ${bs.food[b]} 糧${bs.farmer[b] >= 0 ? ' · 有人耕作' : ' · 沒人耕作'}</div>`;
+      else if (def.pop) extra = `<div class="sub">人口上限 ＋${def.pop}</div>`;
+      const queue = q.length
+        ? `<div class="queue">${q
+            .map((ut, i) => `<button class="qi" data-i="${i}" title="點一下取消">${UNIT_ICONS[UNIT_DEFS[ut].id] ?? '👤'}${i === 0 ? `<i style="width:${qp}%"></i>` : ''}</button>`)
+            .join('')}${pl.housed && bs.owner[b] === g.myPlayer ? '<span class="warn">人口已滿</span>' : ''}</div>`
+        : '';
+      html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${bs.hp[b]}/${def.hp}</span></div>${extra}${queue}</div></div>`;
+    } else if (g.selResource >= 0 && rs.alive[g.selResource]) {
+      const r = g.selResource;
+      const kd = RESOURCE_KINDS[rs.kind[r]];
+      sig += `r${r}|${rs.amount[r]}`;
+      if (sig === this.selSig) return;
+      html = `<div class="sel-one"><span class="big">${RES_ICONS[kd.res]}</span><div><b>${kd.name}</b><div class="sub">剩餘 ${rs.amount[r]} ${RES_NAMES[kd.res]}</div></div></div>`;
+    } else {
+      sig += 'none';
+      if (sig === this.selSig) return;
+      html =
         g.layoutMode === 'pc'
-          ? '<div class="hint">左鍵點選或拖曳框選 · 右鍵移動 · 雙擊選同類 · WASD／邊緣捲動 · 滾輪縮放</div>'
-          : '<div class="hint">點兵選取 · 長按拖曳框選 · 點地面移動 · 雙指縮放</div>';
-      return;
+          ? '<div class="hint">左鍵選取／拖曳框選 · 右鍵：移動、採集、建造 · 雙擊選同類 · WASD 捲動 · 滾輪縮放</div>'
+          : '<div class="hint">點兵選取 · 長按拖曳框選 · 點地面或資源下指令 · 雙指縮放</div>';
     }
-    const color = PLAYER_COLORS[owner] ?? '#fff';
-    if (g.selected.size === 1) {
-      const def = UNIT_DEFS[w.utype[single]];
-      const pct = Math.max(0, Math.min(100, (w.hp[single] / def.hp) * 100));
-      this.selBody.innerHTML = `<div class="sel-one"><span class="dot" style="background:${color}"></span><b>${def.name}</b><span class="hp"><i style="width:${pct}%"></i></span><span>${w.hp[single]}/${def.hp}</span></div>`;
-      return;
-    }
-    const chips = [...counts]
-      .sort((a, b) => a[0] - b[0])
-      .map(([t, n]) => `<button class="chip" data-type="${t}">${UNIT_DEFS[t].name} ×${n}</button>`)
-      .join('');
-    this.selBody.innerHTML = `<div class="sel-many"><span class="dot" style="background:${color}"></span><b>${g.selected.size} 名</b>${chips}</div>`;
+    this.selSig = sig;
+    this.selBody.innerHTML = html;
     this.selBody.querySelectorAll<HTMLButtonElement>('.chip').forEach((b) =>
       b.addEventListener('click', (e) => {
         e.stopPropagation();
         g.keepOnlyType(Number(b.dataset.type));
+      }),
+    );
+    this.selBody.querySelectorAll<HTMLButtonElement>('.qi').forEach((b) =>
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        g.cancelTrain(g.selBuilding, Number(b.dataset.i));
       }),
     );
   }
@@ -220,17 +301,47 @@ export class Hud {
     return c;
   }
 
+  /** 樹被砍掉時，小地圖那一格改成草地色 */
+  clearMiniTile(tx: number, ty: number): void {
+    const ctx = this.miniTerrain.getContext('2d')!;
+    ctx.fillStyle = '#8cbf55';
+    ctx.fillRect(tx, ty, 1, 1);
+  }
+
   private drawMinimap(): void {
     const g = this.game;
     const ctx = this.miniCtx;
     const W = this.mini.width;
     const H = this.mini.height;
-    const map = g.sim.map;
+    const sim = g.sim;
+    const map = sim.map;
     const sx = W / map.w;
     const sy = H / map.h;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.miniTerrain, 0, 0, W, H);
-    const w = g.sim.world;
+    const rs = sim.res;
+    const rdot = Math.max(2, Math.round(W / 110));
+    for (let r = 0; r < rs.high; r++) {
+      if (!rs.alive[r]) continue;
+      const col = MINI_RES[RESOURCE_KINDS[rs.kind[r]].id];
+      if (!col) continue;
+      ctx.fillStyle = col;
+      ctx.fillRect((rs.x[r] / 1024) * sx - rdot / 2, (rs.y[r] / 1024) * sy - rdot / 2, rdot, rdot);
+    }
+    const bs = sim.buildings;
+    for (let b = 0; b < bs.high; b++) {
+      if (!bs.alive[b]) continue;
+      const def = BUILDING_DEFS[bs.btype[b]];
+      ctx.fillStyle = PLAYER_COLORS[bs.owner[b]];
+      ctx.globalAlpha = bs.complete[b] ? 1 : 0.5;
+      ctx.fillRect(bs.tx[b] * sx, bs.ty[b] * sy, Math.max(2, def.w * sx), Math.max(2, def.h * sy));
+      ctx.globalAlpha = 1;
+      if (b === g.selBuilding) {
+        ctx.strokeStyle = '#fff';
+        ctx.strokeRect(bs.tx[b] * sx, bs.ty[b] * sy, def.w * sx, def.h * sy);
+      }
+    }
+    const w = sim.world;
     const dot = Math.max(2, Math.round(W / 90));
     for (let id = 0; id < w.high; id++) {
       if (!w.alive[id]) continue;
@@ -238,12 +349,12 @@ export class Hud {
       ctx.fillRect(g.units.wx[id] * sx - dot / 2, g.units.wz[id] * sy - dot / 2, dot, dot);
     }
     // 鏡頭視野四邊形
-    const r = g.stage.renderer.domElement.getBoundingClientRect();
+    const rect = g.stage.renderer.domElement.getBoundingClientRect();
     const corners = [
-      [r.left, r.top],
-      [r.right, r.top],
-      [r.right, r.bottom],
-      [r.left, r.bottom],
+      [rect.left, rect.top],
+      [rect.right, rect.top],
+      [rect.right, rect.bottom],
+      [rect.left, rect.bottom],
     ].map(([x, y]) => g.cam.groundAt(x, y));
     if (corners.every((p) => p)) {
       ctx.strokeStyle = 'rgba(255,255,255,0.9)';

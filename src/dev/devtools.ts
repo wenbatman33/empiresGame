@@ -9,6 +9,7 @@ import { ONE } from '../sim/core/fixed';
 import { NAV, UNIT_DEFS } from '../sim/core/world';
 import { PASS_BLOCKED, PASS_SHALLOW } from '../sim/map/grid';
 import { Sim } from '../sim/sim';
+import { EconomyBot } from '../ai/economyBot';
 import { applyBox, detectLayout, HUD_KEYS, HUD_NAMES, LAYOUTS, type Anchor, type HudBox, type HudKey, type LayoutMode } from '../ui/layout';
 
 const STORE = 'empiresGame.dev';
@@ -144,6 +145,12 @@ export class DevTools {
     f.add(this.view, 'spawnCount', 1, 300, 1).name('數量');
     f.add({ go: () => g.spawnAtCamera(this.view.spawnPlayer, UNIT_DEFS.findIndex((u) => u.id === this.view.spawnType), this.view.spawnCount) }, 'go').name('＋ 在鏡頭中心生成');
     f.add({ go: () => g.selectArmy() }, 'go').name('選取我方全軍');
+    f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'res' }) }, 'go').name('💰 我方資源各 ＋1000');
+    f.add({ go: () => g.sim.issue({ t: 'cheat', player: g.myPlayer, kind: 'build' }) }, 'go').name('⚡ 我方工地瞬間完工');
+    f.add({ on: g.bots.length > 0 }, 'on').name('敵方經濟 AI').onChange((on: boolean) => {
+      g.bots.length = 0;
+      if (on) g.bots.push(new EconomyBot(g.sim, 1));
+    });
     f.add({ go: () => g.sim.issue({ t: 'clear' }) }, 'go').name('🗑 清除全部單位');
   }
 

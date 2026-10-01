@@ -1,25 +1,28 @@
-// 模擬層確定性檢查（docs/07 §3）：src/sim/ 不得使用會讓各裝置結果不同的 API
+// 模擬層確定性檢查（docs/07 §3）：src/sim/、src/ai/ 不得使用會讓各裝置結果不同的 API
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const ROOT = new URL('../src/sim/', import.meta.url).pathname;
+// 模擬層與電腦 AI 都必須確定性（多人連線時每台機器都跑同一套 AI）
+const ROOTS = ['../src/sim/', '../src/ai/'].map((p) => new URL(p, import.meta.url).pathname);
+const ROOT = new URL('../src/', import.meta.url).pathname;
 const RULES = [
   [/\bMath\.(random|sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|exp|expm1|log|log2|log10|log1p|pow|hypot|cbrt)\b/, '禁用不確定的 Math 函式，改用整數查表或 fixed.ts'],
   [/\*\*/, '禁用 ** 次方運算，改用乘法'],
   [/\b(Date\.now|new Date|performance\.now)\b/, '禁用真實時間，模擬層只能用 tick'],
   [/from\s+['"](three|three\/.*)['"]/, '模擬層不得 import three'],
-  [/from\s+['"]\.\.\/\.\.\/(render|ui|input|dev)\//, '模擬層不得 import 渲染、UI、輸入、DEV'],
+  [/from\s+['"](\.\.\/)+(render|ui|input|dev)\//, '模擬層不得 import 渲染、UI、輸入、DEV'],
   [/\b(window|document|localStorage)\./, '模擬層不得使用 DOM'],
 ];
 
 const files = [];
-(function walk(dir) {
+const walkRoot = function walk(dir) {
   for (const f of readdirSync(dir)) {
     const p = join(dir, f);
     if (statSync(p).isDirectory()) walk(p);
     else if (p.endsWith('.ts')) files.push(p);
   }
-})(ROOT);
+};
+for (const r of ROOTS) walkRoot(r);
 
 let bad = 0;
 for (const f of files) {
@@ -29,7 +32,7 @@ for (const f of files) {
     if (t.startsWith('*') || t.startsWith('/*')) return;
     const code = line.replace(/\/\*.*?\*\//g, '').replace(/\/\/.*$/, '');
     for (const [re, msg] of RULES) {
-      if (re.test(code)) { console.error(`✗ ${f.replace(ROOT, 'src/sim/')}:${i + 1}  ${msg}\n    ${line.trim()}`); bad++; }
+      if (re.test(code)) { console.error(`✗ ${f.replace(ROOT, 'src/')}:${i + 1}  ${msg}\n    ${line.trim()}`); bad++; }
     }
   });
 }

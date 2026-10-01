@@ -1,5 +1,6 @@
 // 程式產生地圖（docs/05 §3）：同一個種子永遠產生同一張地圖
 // 只用整數雜湊與四則運算，不用三角函數，跨裝置一致
+import { RK } from '../core/defs';
 import { Rng } from '../core/rng';
 import { MapGrid, T, WATER_LEVEL, type TileType } from './grid';
 
@@ -192,10 +193,69 @@ export function generateCentralPlains(seed: number, size = 128): MapGrid {
     }
   }
 
-  // 6. 連通性驗證：兩個起始點一定要走得到；走不到就沿直線開路
+  // 6. 起始資源：以地圖中心點對稱放置，兩位玩家完全公平（docs/05 §4）
+  placeStartResources(map, rng);
+
+  // 7. 連通性驗證：兩個起始點一定要走得到；走不到就沿直線開路
   if (!reachable(map, map.starts[0], map.starts[1])) carve(map, map.starts[0], map.starts[1]);
 
   return map;
+}
+
+/** 16 方向單位向量 ×1000（不用三角函數） */
+const DIR16 = [
+  [1000, 0], [924, 383], [707, 707], [383, 924], [0, 1000], [-383, 924], [-707, 707], [-924, 383],
+  [-1000, 0], [-924, -383], [-707, -707], [-383, -924], [0, -1000], [383, -924], [707, -707], [924, -383],
+];
+/** 資源堆形狀（相對格） */
+const BLOB = [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 0], [0, -1], [2, 1], [1, 2], [-1, 1]];
+const BERRY = [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]];
+
+function placeStartResources(map: MapGrid, rng: Rng): void {
+  const S = map.w;
+  const s0 = map.starts[0];
+  const mirror = (x: number, y: number): [number, number] => [S - 1 - x, S - 1 - y];
+  const used = new Uint8Array(S * S);
+  const clusters: [number, number, number, number, number[][]][] = [
+    // 種類、數量、最近、最遠、形狀
+    [RK.berry, 6, 6, 9, BERRY],
+    [RK.gold, 7, 10, 14, BLOB],
+    [RK.stone, 5, 12, 16, BLOB],
+    [RK.gold, 4, 18, 24, BLOB],
+    [RK.stone, 4, 18, 24, BLOB],
+    [RK.deer, 1, 10, 16, [[0, 0]]],
+    [RK.deer, 1, 10, 16, [[0, 0]]],
+    [RK.deer, 1, 10, 16, [[0, 0]]],
+    [RK.deer, 1, 10, 16, [[0, 0]]],
+    [RK.boar, 1, 12, 18, [[0, 0]]],
+    [RK.boar, 1, 12, 18, [[0, 0]]],
+  ];
+  const ok = (x: number, y: number): boolean => {
+    if (!map.inBounds(x, y) || used[y * S + x]) return false;
+    const t = map.tiles[y * S + x];
+    if (t !== T.Grass && t !== T.Dirt && t !== T.Forest) return false;
+    // 離太守府（4×4）至少 4 格
+    for (const s of map.starts) if (Math.max(Math.abs(x - s.x), Math.abs(y - s.y)) < 5) return false;
+    return true;
+  };
+  for (const [kind, n, dMin, dMax, shape] of clusters) {
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const [dx, dy] = DIR16[rng.int(16)];
+      const dist = rng.range(dMin, dMax);
+      const cx = s0.x + Math.round((dx * dist) / 1000);
+      const cy = s0.y + Math.round((dy * dist) / 1000);
+      const tiles = shape.slice(0, n).map(([ox, oy]) => [cx + ox, cy + oy]);
+      // 自己和鏡像位置都要合法，周圍一圈也不能是水
+      const all = tiles.flatMap(([x, y]) => [[x, y], mirror(x, y)]);
+      if (!all.every(([x, y]) => ok(x, y))) continue;
+      for (const [x, y] of all) {
+        used[y * S + x] = 1;
+        if (map.tiles[y * S + x] === T.Forest) map.setTile(x, y, T.Grass);
+        map.resourceSpots.push({ kind, tx: x, ty: y });
+      }
+      break;
+    }
+  }
 }
 
 function reachable(map: MapGrid, a: { x: number; y: number }, b: { x: number; y: number }): boolean {

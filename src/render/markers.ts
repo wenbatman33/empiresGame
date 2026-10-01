@@ -1,13 +1,19 @@
 // 選取圈、圓形假陰影、移動指令標記（全部實例化，不用 DOM）
 import * as THREE from 'three';
-import { CAPACITY } from '../sim/core/world';
+import { UNIT_LOOK } from '../config';
+import { carryBundle } from '../models/resources';
+import { CAPACITY, type World } from '../sim/core/world';
 import type { UnitRenderer } from './units';
+
+/** 搬運中的資源顏色：糧、木、金、石 */
+const CARRY_COLORS = [0xd9a441, 0x8a5a32, 0xf0c53a, 0xa9a6a0].map((c) => new THREE.Color(c));
 
 export class Markers {
   readonly group = new THREE.Group();
   private rings: THREE.InstancedMesh;
   private blobs: THREE.InstancedMesh;
   private pings: { mesh: THREE.Mesh; t: number }[] = [];
+  private carry: THREE.InstancedMesh;
   blobShadows = false;
 
   constructor() {
@@ -37,7 +43,12 @@ export class Markers {
       this.pings.push({ mesh, t: 1 });
       this.group.add(mesh);
     }
-    this.group.add(this.blobs, this.rings);
+    this.carry = new THREE.InstancedMesh(carryBundle(), new THREE.MeshLambertMaterial({ flatShading: true }), CAPACITY);
+    this.carry.count = 0;
+    this.carry.frustumCulled = false;
+    this.carry.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.carry.setColorAt(0, new THREE.Color());
+    this.group.add(this.blobs, this.rings, this.carry);
   }
 
   /** 在地面點一個波紋（下移動指令時） */
@@ -49,9 +60,29 @@ export class Markers {
     p.mesh.visible = true;
   }
 
-  update(units: UnitRenderer, selected: Iterable<number>, owners: Uint8Array, alive: Uint8Array, high: number, myPlayer: number, dt: number): void {
+  update(units: UnitRenderer, selected: Iterable<number>, world: World, myPlayer: number, dt: number): void {
+    const owners = world.owner;
+    const alive = world.alive;
+    const high = world.high;
     const m = new THREE.Matrix4();
     const c = new THREE.Color();
+    // 背上的資源
+    let k = 0;
+    const sc = UNIT_LOOK.scale;
+    for (let id = 0; id < high; id++) {
+      if (!alive[id] || world.carry[id] <= 0) continue;
+      const yaw = units.yaw[id];
+      const bx = units.wx[id] - Math.sin(yaw) * 0.17 * sc;
+      const bz = units.wz[id] - Math.cos(yaw) * 0.17 * sc;
+      const s = (0.6 + Math.min(1, world.carry[id] / 10) * 0.6) * sc;
+      m.makeRotationY(yaw).scale(new THREE.Vector3(s, s, s)).setPosition(bx, units.wy[id] + 0.42 * sc, bz);
+      this.carry.setMatrixAt(k, m);
+      this.carry.setColorAt(k, CARRY_COLORS[world.carryRes[id]]);
+      k++;
+    }
+    this.carry.count = k;
+    this.carry.instanceMatrix.needsUpdate = true;
+    if (this.carry.instanceColor) this.carry.instanceColor.needsUpdate = true;
     let n = 0;
     for (const id of selected) {
       m.makeTranslation(units.wx[id], units.wy[id] + 0.03, units.wz[id]);
