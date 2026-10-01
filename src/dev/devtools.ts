@@ -7,6 +7,7 @@ import type { Game } from '../game';
 import type { AnimName } from '../models/soldier';
 import { ONE } from '../sim/core/fixed';
 import { NAV, UNIT_DEFS } from '../sim/core/world';
+import { BUILDING_DEFS } from '../sim/core/defs';
 import { PASS_BLOCKED, PASS_SHALLOW } from '../sim/map/grid';
 import { Sim } from '../sim/sim';
 import { AIPlayer } from '../ai/ai';
@@ -91,6 +92,7 @@ export class DevTools {
     this.buildPerf();
     this.buildStress();
     this.buildFeatures();
+    this.buildScenario();
     this.buildSim();
     this.buildCamera();
     this.buildLight();
@@ -158,6 +160,63 @@ export class DevTools {
       if (on) g.ais.push(new AIPlayer(g.sim, 1, g.setup.ai));
     });
     f.add({ go: () => g.sim.issue({ t: 'clear' }) }, 'go').name('🗑 清除全部單位');
+  }
+
+  /** 劇本編輯（docs/08 §2）：量座標、記錄擺放、匯出 JSON、觸發器狀態、直接過關／失敗 */
+  private buildScenario(): void {
+    const g = this.game;
+    const sim = g.sim;
+    const f = this.gui.addFolder('劇本編輯（戰役）');
+    const info = { pos: '', building: 'house', anchor: 'A' as 'A' | 'B' | 'C' };
+    const places: object[] = [];
+    // 鏡頭中心相對錨點的座標
+    const rel = (): [number, number, number, number] => {
+      const t = g.cam.target;
+      const tx = Math.floor(t.x);
+      const ty = Math.floor(t.z);
+      const m = sim.map;
+      const base = info.anchor === 'A' ? m.starts[0] : info.anchor === 'B' ? m.starts[1] : { x: m.w >> 1, y: m.h >> 1 };
+      return [tx, ty, tx - base.x, ty - base.y];
+    };
+    const posCtl = f.add(info, 'pos').name('鏡頭位置').disable();
+    window.setInterval(() => {
+      const [tx, ty, dx, dy] = rel();
+      info.pos = `(${tx},${ty})  ${info.anchor}${dx >= 0 ? '+' : ''}${dx},${dy >= 0 ? '+' : ''}${dy}`;
+      posCtl.updateDisplay();
+    }, 300);
+    f.add(info, 'anchor', { 'A 玩家出生點': 'A', 'B 敵方出生點': 'B', 'C 地圖中心': 'C' }).name('錨點');
+    f.add({ go: () => {
+      const [, , dx, dy] = rel();
+      places.push({ player: this.view.spawnPlayer, unit: this.view.spawnType, at: [info.anchor, dx, dy], n: this.view.spawnCount });
+      g.spawnAtCamera(this.view.spawnPlayer, UNIT_DEFS.findIndex((u) => u.id === this.view.spawnType), this.view.spawnCount);
+      g.hud.toast(`已記錄 ${places.length} 筆擺放`);
+    } }, 'go').name('📌 記錄單位擺放（用「壓測與生兵」的兵種／陣營／數量）');
+    f.add(info, 'building', Object.fromEntries(BUILDING_DEFS.map((b) => [b.name, b.id]))).name('建築');
+    f.add({ go: () => {
+      const [tx, ty, dx, dy] = rel();
+      const bt = BUILDING_DEFS.findIndex((b) => b.id === info.building);
+      const d = BUILDING_DEFS[bt];
+      if (!sim.canPlace(bt, tx - (d.w >> 1), ty - (d.h >> 1))) return g.hud.toast('這裡不能蓋');
+      sim.placeBuilding(bt, this.view.spawnPlayer, tx - (d.w >> 1), ty - (d.h >> 1), true);
+      places.push({ player: this.view.spawnPlayer, building: info.building, at: [info.anchor, dx, dy] });
+      g.hud.toast(`已記錄 ${places.length} 筆擺放`);
+    } }, 'go').name('🏠 記錄建築擺放');
+    f.add({ go: () => {
+      const json = JSON.stringify(places, null, 0).replace(/\},\{/g, '},\n{');
+      console.log('[劇本擺放]', json);
+      navigator.clipboard?.writeText(json).catch(() => {});
+      window.prompt('擺放 JSON（已複製到剪貼簿，貼進 src/data/campaigns.ts 的 place）', json);
+    } }, 'go').name('💾 匯出擺放 JSON');
+    f.add({ go: () => {
+      const sc = sim.scenario;
+      if (!sc) return g.hud.toast('目前不是戰役');
+      const txt = `觸發：${[...sc.fired].join('、')}\n變數：${[...sc.vars].map(([k, v]) => `${k}=${v}`).join('、') || '無'}\n目標：${[...sc.objectives].map(([k, v]) => `${k}:${v}`).join('、')}`;
+      console.log(txt);
+      window.alert(txt);
+    } }, 'go').name('🔍 觸發器狀態');
+    f.add({ go: () => sim.declareWinner(0, 'scenario') }, 'go').name('🏆 直接過關');
+    f.add({ go: () => sim.declareWinner(1, 'scenario') }, 'go').name('💀 直接失敗');
+    f.close();
   }
 
   /** 三國特色：武將技、計策、演出與結算預覽（docs/02） */

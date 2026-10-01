@@ -18,6 +18,8 @@ export interface GameSetup {
   aiFaction?: string;
   /** 玉璽稱帝勝利 */
   seal?: boolean;
+  /** 戰役關卡 id（例如 1-1）；有值就是戰役模式 */
+  campaign?: string;
 }
 
 export const DEFAULT_SETUP: GameSetup = { ai: 'normal', map: 96, seed: 0, res: 0, pop: 125, speed: 1, reveal: false, mapType: 'central', faction: 'random', aiFaction: 'random', seal: true };
@@ -34,6 +36,7 @@ export function readSetup(p: URLSearchParams): GameSetup {
     faction: pick('f', FACTION_KEYS, 'random'),
     aiFaction: pick('af', FACTION_KEYS, 'random'),
     seal: p.get('seal') !== '0',
+    campaign: p.get('campaign') ?? undefined,
     map: Number(p.get('map')) === 128 ? 128 : 96,
     seed: Number(p.get('seed')) || 20261001,
     res: [0, 500, 2000].includes(Number(p.get('res'))) ? Number(p.get('res')) : 0,
@@ -58,6 +61,7 @@ export function setupQuery(s: GameSetup): string {
     speed: String(s.speed),
     reveal: s.reveal ? '1' : '0',
   });
+  if (s.campaign) q.set('campaign', s.campaign);
   const dev = new URLSearchParams(location.search).get('dev');
   if (dev !== null) q.set('dev', dev);
   return `?${q.toString()}`;
@@ -70,7 +74,7 @@ function el(html: string): HTMLElement {
 }
 
 /** 主選單 */
-export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStart: (s: GameSetup) => void; onLoad: () => void; onSettings?: () => void }): void {
+export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStart: (s: GameSetup) => void; onLoad: () => void; onSettings?: () => void; onCampaign?: () => void }): void {
   const s: GameSetup = { ...DEFAULT_SETUP, seed: (Math.random() * 1e9) | 0 };
   const m = el(`
     <div class="menu-screen main-menu">
@@ -78,7 +82,8 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
         <img class="menu-logo" src="${ASSET('ui/logo.png')}" alt="三國霸業" onerror="this.outerHTML='<div class=&quot;menu-title&quot;>三國霸業</div>'">
         <div class="menu-sub">Q 版三國即時戰略</div>
         <div class="menu-main">
-          <button class="menu-btn primary" data-act="setup">⚔ 開始遊戲</button>
+          <button class="menu-btn primary" data-act="campaign">📜 戰役</button>
+          <button class="menu-btn primary" data-act="setup">⚔ 自由對戰</button>
           ${opts.hasSave ? '<button class="menu-btn" data-act="load">📜 繼續上次</button>' : ''}
           <button class="menu-btn" data-act="help">❓ 操作說明</button>
           <button class="menu-btn" data-act="settings">⚙ 設定</button>
@@ -121,6 +126,10 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
     setup.hidden = act !== 'setup';
     help.hidden = act !== 'help';
     if (act === 'load') opts.onLoad();
+    if (act === 'campaign') {
+      main.hidden = false;
+      opts.onCampaign?.();
+    }
     if (act === 'settings') {
       main.hidden = false;
       opts.onSettings?.();
@@ -175,19 +184,22 @@ const WIN_TEXT: Record<string, [string, string]> = {
   seal: ['傳國玉璽在手，登基稱帝！', '敵方挾玉璽稱帝，天命已失……'],
   wonder: ['奇觀巍然屹立，四海賓服！', '敵方奇觀落成，大勢已去……'],
   resign: ['敵軍棄城投降！', '我軍已投降。'],
+  scenario: ['任務完成！', '任務失敗……再試一次吧。'],
 };
 
-export function showGameOver(root: HTMLElement, win: boolean, rows: [string, string, string][], acts: { again: () => void; menu: () => void; watch: () => void }, reason = 'conquest'): void {
+export function showGameOver(root: HTMLElement, win: boolean, rows: [string, string, string][], acts: { again: () => void; menu: () => void; watch: () => void; next?: () => void }, reason = 'conquest', stars = -1): void {
   const table = rows.map(([k, a, b]) => `<tr><th>${k}</th><td>${a}</td><td>${b}</td></tr>`).join('');
   const m = el(`
     <div class="menu-screen dim">
       <div class="menu-card">
         <div class="menu-title ${win ? 'win' : 'lose'}">${win ? '勝 利' : '戰 敗'}</div>
         <div class="menu-sub">${(WIN_TEXT[reason] ?? WIN_TEXT.conquest)[win ? 0 : 1]}</div>
+        ${stars >= 0 ? `<div class="go-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>` : ''}
         <table class="stats"><tr><th></th><td>我軍</td><td>敵軍</td></tr>${table}</table>
         <div class="menu-row">
           <button class="menu-btn" data-act="watch">👀 看戰場</button>
-          <button class="menu-btn primary" data-act="again">⚔ 再來一局</button>
+          <button class="menu-btn primary" data-act="again">⚔ ${acts.next ? '重玩這關' : '再來一局'}</button>
+          ${acts.next ? '<button class="menu-btn primary" data-act="next">下一關 ▶</button>' : ''}
           <button class="menu-btn" data-act="menu">🏠 主選單</button>
         </div>
       </div>
@@ -197,7 +209,7 @@ export function showGameOver(root: HTMLElement, win: boolean, rows: [string, str
     const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act as keyof typeof acts | undefined;
     if (!act) return;
     if (act === 'watch') m.remove();
-    acts[act]();
+    acts[act]?.();
   });
 }
 

@@ -30,6 +30,8 @@ export class Effects {
   private readonly scrolls: THREE.InstancedMesh;
   private readonly seal: THREE.Mesh;
   private readonly bursts: Burst[] = [];
+  /** 戰役目標光柱 */
+  private readonly pillars: THREE.InstancedMesh;
   private readonly m = new THREE.Matrix4();
   private readonly q = new THREE.Quaternion();
   private readonly e = new THREE.Euler();
@@ -63,7 +65,12 @@ export class Effects {
     this.scrolls.count = 0;
     this.seal = new THREE.Mesh(sealModel(), itemMat);
     this.seal.visible = false;
-    this.group.add(this.discs, this.rings, this.flames, this.scrolls, this.seal);
+    const pillarGeo = new THREE.CylinderGeometry(0.35, 0.6, 7, 10, 1, true);
+    pillarGeo.translate(0, 3.5, 0);
+    this.pillars = new THREE.InstancedMesh(pillarGeo, new THREE.MeshBasicMaterial({ color: 0xffd860, transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }), 16);
+    this.pillars.count = 0;
+    this.pillars.frustumCulled = false;
+    this.group.add(this.discs, this.rings, this.flames, this.scrolls, this.seal, this.pillars);
   }
 
   /** 技能、計策、倒戈等的爆發圈 */
@@ -218,6 +225,31 @@ export class Effects {
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
     }
+  }
+
+  /** 戰役目標：發光光柱 ＋ 地面金圈 */
+  beacons(list: Map<string, [number, number]>, now: number): void {
+    let n = 0;
+    for (const [, [tx, ty]] of list) {
+      if (n >= 16) break;
+      const x = tx + 0.5;
+      const z = ty + 0.5;
+      const pulse = 1 + 0.12 * Math.sin(now * 3 + n);
+      this.v.set(x, this.groundY(x, z), z);
+      this.s.set(pulse, 1, pulse);
+      this.m.compose(this.v, this.q.identity(), this.s);
+      this.pillars.setMatrixAt(n++, this.m);
+      this.burstRing(x, z, now);
+    }
+    this.pillars.count = n;
+    this.pillars.instanceMatrix.needsUpdate = true;
+  }
+
+  private ringT = 0;
+  private burstRing(x: number, z: number, now: number): void {
+    if (now - this.ringT < 0.9) return;
+    this.ringT = now;
+    this.burst(x, z, 2.2, 0xffd860, now, 1.2);
   }
 
   private groundY(x: number, z: number): number {

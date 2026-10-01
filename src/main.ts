@@ -4,6 +4,7 @@ import { latestSave } from './save/save';
 import { sfx } from './audio/sfx';
 import type { Quality } from './config';
 import { readSetup, setupQuery, showMainMenu, showSettings, type GameSetup } from './ui/menus';
+import { showCampaignMenu } from './ui/story';
 import './style.css';
 
 // DEV 工具只在開發模式或網址加 ?dev=1 時載入（一般玩家不會下載）
@@ -42,6 +43,8 @@ async function start(setup: GameSetup, load: boolean): Promise<void> {
     game = new Game(app, { setup: st, quality: savedQuality() ?? autoQuality() });
   }
   (window as unknown as { game: Game }).game = game;
+  // 讀檔：不顯示戰役簡報（重播完直接接著玩）
+  if (save) game.replaying = true;
   game.start();
   hideLoading();
   if (save) await game.replay(save.data.history, save.data.tick);
@@ -72,6 +75,14 @@ function boot(): void {
   sfx.setMusic('peace');
   showMainMenu(document.body, {
     hasSave: !!latestSave(),
+    onCampaign: () =>
+      showCampaignMenu(
+        document.body,
+        (id) => {
+          location.href = `${location.pathname}?play=1&campaign=${id}${devEnabled && params.has('dev') ? '&dev=1' : ''}`;
+        },
+        () => {},
+      ),
     onSettings: () =>
       showSettings(
         document.body,

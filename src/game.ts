@@ -11,6 +11,8 @@ import { BuildingRenderer } from './render/buildings';
 import { Effects } from './render/effects';
 import { Particles } from './render/particles';
 import { Advisor } from './ui/advisor';
+import { SCENARIO_BY_ID } from './data/campaigns';
+import { DialogBox, ObjectivePanel, saveStars, showBriefing, SCENARIOS } from './ui/story';
 import { SKILLS, STRATAGEMS } from './sim/systems/abilities';
 import { FogRenderer } from './render/fog';
 import { ProjectileRenderer } from './render/projectiles';
@@ -57,6 +59,9 @@ export class Game {
   readonly effects: Effects;
   readonly particles: Particles;
   readonly advisor: Advisor;
+  /** 戰役：對話框、目標面板 */
+  private dialog: DialogBox | null = null;
+  private objectives: ObjectivePanel | null = null;
   readonly cam: RtsCamera;
   readonly hud: Hud;
   readonly controls: Controls;
@@ -110,7 +115,8 @@ export class Game {
     this.setup = opts.setup;
     const st = opts.setup;
     const fac = (f?: string) => (f && f !== 'random' ? f : '');
-    this.sim = new Sim({
+    const scenario = st.campaign ? SCENARIO_BY_ID.get(st.campaign) : undefined;
+    this.sim = scenario ? new Sim({ seed: 1, scenario, popLimit: st.pop }) : new Sim({
       seed: st.seed,
       mapSize: st.map,
       mapType: st.mapType ?? 'central',
@@ -140,7 +146,15 @@ export class Game {
     this.controls = new Controls(this, this.stage.renderer.domElement);
     this.hud = new Hud(container, this);
     this.advisor = new Advisor(container, this);
-    this.ais.push(new AIPlayer(this.sim, 1, st.ai));
+    if (scenario) {
+      scenario.players.forEach((p, i) => {
+        if (p.ai) this.ais.push(new AIPlayer(this.sim, i, p.ai));
+      });
+      this.dialog = new DialogBox(container);
+      this.objectives = new ObjectivePanel(container, scenario);
+    } else {
+      this.ais.push(new AIPlayer(this.sim, 1, st.ai));
+    }
     this.fog.enabled = !st.reveal;
     this.goHome();
     this.addMenuButton(container);
@@ -172,6 +186,12 @@ export class Game {
 
   start(): void {
     sfx.setMusic('peace');
+    // 戰役：先看簡報，按「出征」才開始
+    const sc = this.sim.scenario?.sc;
+    if (sc && this.sim.tick < 5 && !this.replaying) {
+      this.paused = true;
+      showBriefing(document.body, sc, () => (this.paused = false));
+    }
     sfx.preloadVoices(['sel_soldier_1', 'cmd_soldier_1', 'atk_soldier_1', 'sel_villager_1', 'cmd_villager_1']);
     // 玩家下的指令：播語音回應（AI、重播不播）
     const issue = this.sim.issue.bind(this.sim);
@@ -279,6 +299,7 @@ export class Game {
     this.buildingsR.update(this.sim, this.selBuilding, this.myPlayer, exp);
     this.projectilesR.update(this.sim, alpha, vis);
     this.effects.update(this.sim, this.units, this.time, this.myPlayer, vis, exp);
+    if (this.sim.scenario) this.effects.beacons(this.sim.scenario.beacons, this.time);
     this.ambientParticles(dt, ticks > 0);
     this.particles.update(this.time);
     this.battleSounds();
@@ -292,7 +313,8 @@ export class Game {
       this.buildingsR.setLineGhost([]);
     }
     this.hud.update(dt);
-    this.advisor.update(dt * this.speed);
+    if (this.sim.scenario) this.objectives?.update(this.sim.scenario.objectives);
+    else this.advisor.update(dt * this.speed);
     this.stage.render();
     for (const f of this.onFrame) f(dt);
 
@@ -342,6 +364,7 @@ export class Game {
       }
       if (e.t === 'gameOver' && !this.over) this.gameOver(e.winner === this.myPlayer, e.reason);
       if (!this.replaying) this.featureEvent(e);
+      if (!this.replaying) this.storyEvent(e);
       if (e.t === 'bDestroyed') {
         if (this.selBuilding === e.id) this.selBuilding = -1;
         // 建築崩塌：大片塵土 ＋ 碎屑
@@ -438,6 +461,41 @@ export class Game {
       const pz = z + Math.sin(ang) * r * 0.6;
       this.particles.emit('smoke', px, this.terrain.heightAt(px, pz) + 0.8, pz, now, 1.2);
       this.particles.emit('ember', px, this.terrain.heightAt(px, pz) + 0.4, pz, now);
+    }
+  }
+
+  /** 戰役事件：對話（暫停遊戲）、目標、鏡頭、提示、武將特寫 */
+  private storyEvent(e: (typeof this.sim.events)[number]): void {
+    const sc = this.sim.scenario;
+    if (!sc) return;
+    switch (e.t) {
+      case 'dialog':
+        if (!this.dialog) return;
+        this.paused = true;
+        this.dialog.play(e.lines, () => (this.paused = false));
+        break;
+      case 'objective': {
+        const o = sc.sc.objectives.find((x) => x.id === e.id);
+        if (!o) return;
+        if (e.state === 'done') {
+          this.hud.toast(`✅ 目標達成：${o.text}`, 3000);
+          sfx.play('done', 0.3);
+        } else if (e.state === 'failed') {
+          this.hud.toast(`❌ 目標失敗：${o.text}`, 3000);
+          sfx.play('error', 0.3);
+        } else this.hud.toast(`📜 新目標：${o.text}`, 3000);
+        break;
+      }
+      case 'camera':
+        this.cam.lookAt(e.x + 0.5, e.y + 0.5);
+        break;
+      case 'hint':
+        this.hud.toast(e.text, 5000);
+        break;
+      case 'cutin':
+        this.hud.cutIn(UNIT_DEFS.find((u) => u.id === e.hero)?.name ?? '', e.skill, true, e.hero);
+        sfx.play('skill', 0.5);
+        break;
     }
   }
 
@@ -649,15 +707,28 @@ export class Game {
       ['研究科技', String(me.stats.researched), String(en.stats.researched)],
       ...me.gathered.map((v, k) => [`採集${RES_NAMES[k]}`, String(v), String(en.gathered[k])] as [string, string, string]),
     ];
+    // 戰役：星等（過關 1 顆、時間內 1 顆、次要目標 1 顆）
+    const sc = this.sim.scenario;
+    let stars = -1;
+    let next: (() => void) | undefined;
+    if (sc) {
+      stars = win ? 1 + (sec <= sc.sc.stars.time ? 1 : 0) + (sc.sc.stars.bonus && sc.objectives.get(sc.sc.stars.bonus) === 'done' ? 1 : 0) : 0;
+      if (win && !preview) saveStars(sc.sc.id, stars);
+      const list = SCENARIOS.filter((s) => s.chapter === sc.sc.chapter);
+      const nx = list[list.indexOf(sc.sc) + 1];
+      if (win && nx) next = () => (location.href = `${location.pathname}${setupQuery({ ...this.setup, campaign: nx.id })}`);
+      rows.splice(1, 1);
+    }
     showGameOver(document.body, win, rows, {
+      next,
       again: () => {
-        location.href = `${location.pathname}${setupQuery({ ...this.setup, seed: (Math.random() * 1e9) | 0 })}`;
+        location.href = `${location.pathname}${setupQuery({ ...this.setup, seed: sc ? this.setup.seed : (Math.random() * 1e9) | 0 })}`;
       },
       menu: () => {
         location.href = `${location.pathname}${this.devQuery('?')}`;
       },
       watch: () => {},
-    }, reason);
+    }, reason, stars);
   }
 
   // ───────── 點選 ─────────

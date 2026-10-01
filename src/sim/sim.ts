@@ -10,6 +10,7 @@ import { NAV, ORDER, S, TASK, World } from './core/world';
 import { generateMap } from './map/generator';
 import { PASS_BLOCKED, T, basePass, baseWaterPass, type MapGrid } from './map/grid';
 import { AbilitySystem } from './systems/abilities';
+import { ScenarioSystem, type Scenario } from './systems/scenario';
 import { CombatSystem } from './systems/combat';
 import { EconomySystem } from './systems/economy';
 import { MovementSystem } from './systems/movement';
@@ -35,6 +36,8 @@ export interface SimOptions {
   factions?: string[];
   /** 玉璽稱帝勝利（預設開啟） */
   seal?: boolean;
+  /** 戰役劇本：地圖、玩家、擺放、觸發器都由劇本決定（docs/08 §2） */
+  scenario?: Scenario;
 }
 
 /** 給渲染與 UI 的事件（不影響模擬狀態，不算進雜湊） */
@@ -55,7 +58,12 @@ export type SimEvent =
   | { t: 'skill'; id: number; player: number; skill: string; x: number; y: number }
   | { t: 'stratagem'; player: number; kind: string; x: number; y: number }
   | { t: 'levelUp'; id: number; level: number }
-  | { t: 'wonder'; id: number; player: number };
+  | { t: 'wonder'; id: number; player: number }
+  | { t: 'dialog'; lines: { who: string; face?: string; text: string }[] }
+  | { t: 'objective'; id: string; state: string }
+  | { t: 'camera'; x: number; y: number }
+  | { t: 'hint'; text: string }
+  | { t: 'cutin'; hero: string; skill: string };
 
 interface FlowEntry {
   field: FlowField;
@@ -91,6 +99,8 @@ export class Sim {
   readonly combat: CombatSystem;
   readonly vision: VisionSystem;
   readonly abilities: AbilitySystem;
+  /** 戰役劇本（一般對戰為 null） */
+  readonly scenario: ScenarioSystem | null = null;
   /** 勝利原因：conquest、seal（稱帝）、wonder、resign */
   winReason = '';
   readonly sealVictory: boolean;
@@ -112,6 +122,11 @@ export class Sim {
   readonly stats = { flowBuilds: 0, paths: 0 };
 
   constructor(opts: SimOptions) {
+    const sc = opts.scenario;
+    if (sc) {
+      // 劇本：地圖、勢力由劇本決定；不用標準開局
+      opts = { ...opts, seed: sc.map.seed, mapType: sc.map.type, mapSize: sc.map.size, factions: sc.players.map((p) => p.faction), start: 'empty', seal: false };
+    }
     this.seed = opts.seed >>> 0;
     this.rng = new Rng(this.seed);
     this.map = opts.map ?? generateMap(opts.mapType ?? 'central', this.seed, opts.mapSize ?? 128);
@@ -137,6 +152,17 @@ export class Sim {
     this.abilities = new AbilitySystem(this);
     this.createResources();
     if ((opts.start ?? (opts.map ? 'empty' : 'standard')) === 'standard') this.standardStart();
+    if (sc) {
+      this.scenario = new ScenarioSystem(this, sc);
+      this.scenario.setup();
+      this.economy.step();
+      this.vision.step();
+    }
+  }
+
+  /** 劇本、AI 共用：對一群單位下攻擊移動（直接執行，不經過指令佇列） */
+  orderAttackMove(player: number, ids: number[], x: number, y: number): void {
+    this.cmdMove(player, ids, x, y, ORDER.AttackMove, false);
   }
 
   /** 森林格 → 樹；地圖產生器的資源點 → 野果、金、石、動物 */
@@ -192,6 +218,7 @@ export class Sim {
     this.combat.step();
     this.abilities.step();
     this.abilities.stepPickups();
+    this.scenario?.step();
     this.movement.step();
     this.vision.step();
     if (this.tick % 10 === 0) this.checkVictory();
@@ -214,7 +241,8 @@ export class Sim {
 
   /** 征服勝利（docs/01 §3）：失去所有太守府且沒有民夫 → 判負；只剩一方 → 勝利 */
   private checkVictory(): void {
-    if (this.winner >= 0) return;
+    // 戰役的勝負由劇本觸發器決定
+    if (this.winner >= 0 || this.scenario) return;
     const n = this.players.length;
     const hasTh = new Uint8Array(n);
     const hasVil = new Uint8Array(n);
@@ -322,6 +350,10 @@ export class Sim {
     for (let r = 0; r < rs.high; r++) if (rs.alive[r]) h.add(r).add(rs.amount[r]);
     for (const p of this.players) h.addArray(p.res).add(p.pop).add(p.popCap).add(p.age).add(p.techs.size).add(p.defeated ? 1 : 0);
     h.add(this.projectiles.count).add(this.abilities.areas.length).add(this.abilities.burning.size);
+    if (this.scenario) {
+      h.add(this.scenario.fired.size);
+      for (const [k, v] of [...this.scenario.vars].sort()) h.add(k.length).add(v);
+    }
     for (const it of this.abilities.items) h.add(it.carrier).add(it.academy).add(it.x).add(it.y);
     h.addArray(this.rng.getState());
     return h.value();

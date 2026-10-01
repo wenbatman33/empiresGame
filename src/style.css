@@ -887,3 +887,185 @@ body:has(#hud[data-layout='mobile']) #menu-btn {
   flex: 1;
   min-width: 14em;
 }
+
+/* ───────── M6：戰役對話、目標面板、戰役選單 ───────── */
+.dialog {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(760px, 94vw);
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 60;
+  cursor: pointer;
+  animation: advisor-in 0.25s ease-out;
+}
+.dialog .face {
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  flex: none;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.6));
+  margin-bottom: -6px;
+}
+.dialog .box {
+  flex: 1;
+  min-height: 96px;
+  padding: 10px 16px 22px;
+  border: 3px solid var(--gold);
+  border-radius: 14px;
+  background: linear-gradient(rgba(58, 40, 24, 0.96), rgba(36, 25, 15, 0.96));
+  color: var(--paper);
+  position: relative;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+.dialog .who {
+  display: inline-block;
+  margin: -24px 0 6px -4px;
+  padding: 2px 14px;
+  border-radius: 8px;
+  background: #8a2f2a;
+  border: 2px solid var(--gold);
+  color: #ffe9b0;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+.dialog .text {
+  font-size: 18px;
+  line-height: 1.55;
+  min-height: 2.6em;
+}
+.dialog .more {
+  position: absolute;
+  right: 12px;
+  bottom: 4px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.dialog .skip {
+  position: absolute;
+  right: 0;
+  top: -34px;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--gold);
+  background: rgba(20, 14, 9, 0.85);
+  color: var(--paper);
+  cursor: pointer;
+}
+#hud[data-layout='mobile'] ~ .dialog .face,
+.dialog.compact .face {
+  width: 84px;
+  height: 84px;
+}
+@media (max-height: 520px) {
+  .dialog .face {
+    width: 84px;
+    height: 84px;
+  }
+  .dialog .text {
+    font-size: 15px;
+  }
+}
+.objectives {
+  position: fixed;
+  left: 10px;
+  top: 52px;
+  max-width: min(320px, 60vw);
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(232, 196, 106, 0.6);
+  background: rgba(20, 14, 9, 0.78);
+  color: var(--paper);
+  font-size: 13px;
+  z-index: 30;
+  cursor: pointer;
+}
+.objectives .title {
+  color: var(--gold);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.objectives .obj.done {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+.objectives .obj.failed {
+  color: #ff9a8a;
+}
+.objectives .obj.side {
+  font-size: 12px;
+  opacity: 0.9;
+}
+.menu-card.campaign {
+  width: min(760px, 100%);
+  text-align: left;
+}
+.chapter {
+  margin-bottom: 8px;
+}
+.ch-title {
+  color: var(--gold);
+  font-size: 20px;
+  font-weight: 700;
+}
+.ch-title .sub,
+.level .sub {
+  font-size: 13px;
+  opacity: 0.75;
+  font-weight: 400;
+}
+.ch-desc {
+  font-size: 14px;
+  opacity: 0.85;
+  margin: 2px 0 6px;
+}
+.levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+}
+.level {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 2px solid var(--gold);
+  background: linear-gradient(#4a3420, #33241a);
+  color: var(--paper);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.level:hover {
+  filter: brightness(1.15);
+}
+.level.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.level .stars {
+  color: #ffd23a;
+  letter-spacing: 0.1em;
+}
+.brief {
+  font-size: 16px;
+  line-height: 1.6;
+  text-align: left;
+}
+.obj-list {
+  text-align: left;
+  font-size: 14px;
+  opacity: 0.9;
+}
+.go-stars {
+  font-size: 40px;
+  color: #ffd23a;
+  letter-spacing: 0.15em;
+  text-shadow: 0 2px 0 #000;
+}
