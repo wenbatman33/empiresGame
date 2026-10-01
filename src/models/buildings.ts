@@ -328,6 +328,157 @@ function workshop(): THREE.BufferGeometry {
   return b.build();
 }
 
+
+/** 關隘（4×4）：高台城樓、兩側城牆、正面城門洞、三面旗 */
+function fortress(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(box(3.95, 1.0, 3.95), 0x8f8676, M(0, -0.3, 0));
+  // 城台：下寬上窄
+  b.add(box(3.7, 1.3, 3.2), 0xa39684, M(0, 0.65, -0.2));
+  b.add(box(3.8, 0.1, 3.3), 0x8a7d6c, M(0, 1.32, -0.2));
+  for (let k = 0; k < 7; k++) b.add(box(0.32, 0.26, 0.26), 0x9a8d7b, M(-1.65 + k * 0.55, 1.5, 1.3));
+  for (let k = 0; k < 6; k++) for (const x of [-1.75, 1.75]) b.add(box(0.26, 0.26, 0.3), 0x9a8d7b, M(x, 1.5, -1.6 + k * 0.55));
+  // 城門洞
+  b.add(box(0.95, 0.85, 0.12), DOOR, M(0, 0.43, 1.42));
+  b.add(cyl(0.48, 0.48, 0.12, 10, false), DOOR, M(0, 0.85, 1.42, Math.PI / 2));
+  // 城樓：兩層歇山
+  b.add(box(2.2, 0.75, 1.5), EARTH, M(0, 1.75, -0.35));
+  for (const x of [-1.0, -0.35, 0.35, 1.0]) b.add(cyl(0.06, 0.07, 0.75, 6), 0xa8322d, M(x, 1.75, 0.45));
+  brackets(b, 2.2, 2.12, 0.45);
+  b.add(pyramid(2.9, 0.65, 2.2), THATCH, M(0, 2.15, -0.35));
+  b.add(box(1.2, 0.4, 0.8), EARTH, M(0, 2.85, -0.35));
+  b.add(pyramid(1.7, 0.5, 1.3), THATCH_DARK, M(0, 3.0, -0.35));
+  ridge(b, 0, 3.5, -0.35, 0.5);
+  b.add(box(0.9, 0.28, 0.04), 0x2a2018, M(0, 2.42, 0.42));
+  b.add(box(0.8, 0.2, 0.03), GOLD, M(0, 2.42, 0.45));
+  banner(b, 1.65, 1.15, 2.7, 1.2);
+  banner(b, -1.65, 1.15, 2.7, 1.2);
+  banner(b, 0, -1.65, 3.6, 1.3);
+  return b.build();
+}
+
+/** 書院（3×3）：白牆青瓦、竹林、書卷架 */
+function academy(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  platform(b, 2.9, 2.9, 0.16);
+  b.add(box(2.2, 0.9, 1.5), 0xeee6d6, M(0, 0.61, -0.4));
+  for (const x of [-0.95, -0.32, 0.32, 0.95]) b.add(cyl(0.06, 0.06, 0.9, 6), WOOD, M(x, 0.61, 0.42));
+  brackets(b, 2.2, 1.02, 0.42);
+  b.add(gable(2.7, 0.7, 2.1), 0x4f5862, M(0, 1.06, -0.3));
+  ridge(b, 0, 1.78, -0.3, 2.7);
+  b.add(box(0.5, 0.6, 0.04), DOOR, M(0, 0.46, 0.36));
+  // 匾額
+  b.add(box(0.7, 0.18, 0.04), 0x2a2018, M(0, 1.0, 0.45));
+  b.add(box(0.6, 0.1, 0.03), GOLD, M(0, 1.0, 0.48));
+  // 竹叢
+  for (const [x, z] of [[-1.15, 0.9], [-1.0, 1.15], [-1.25, 1.2]]) {
+    b.add(cyl(0.025, 0.03, 1.2, 4), 0x6d9a3c, M(x, 0.75, z));
+    b.add(cone(0.14, 0.4, 5), 0x5d8a34, M(x, 1.3, z));
+  }
+  // 書卷架、石桌
+  b.add(box(0.5, 0.5, 0.2), PLANK, M(1.0, 0.41, 0.95));
+  for (let k = 0; k < 3; k++) b.add(cyl(0.05, 0.05, 0.4, 6), 0xe8dcb8, M(1.0, 0.3 + k * 0.13, 0.95, 0, 0, Math.PI / 2));
+  b.add(cyl(0.22, 0.25, 0.3, 8), 0x9a948a, M(0.2, 0.31, 1.0));
+  banner(b, -1.2, -1.2, 2.0, 0.9);
+  return b.build();
+}
+
+/** 市集（4×4）：攤位棚子、貨物、牌坊 */
+function market(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  platform(b, 3.9, 3.9, 0.08);
+  // 牌坊
+  for (const x of [-1.0, 1.0]) b.add(cyl(0.08, 0.09, 1.8, 6), 0xa8322d, M(x, 0.98, 1.7));
+  b.add(box(2.6, 0.16, 0.2), 0xa8322d, M(0, 1.8, 1.7));
+  b.add(gable(2.8, 0.3, 0.45), THATCH_DARK, M(0, 1.88, 1.7));
+  b.add(box(0.9, 0.24, 0.04), GOLD, M(0, 1.55, 1.72));
+  // 攤位：四個小棚，隊伍色布篷
+  for (const [x, z] of [[-1.15, -1.1], [1.15, -1.1], [-1.15, 0.35], [1.15, 0.35]]) {
+    for (const [dx, dz] of [[-0.45, -0.35], [0.45, -0.35], [-0.45, 0.35], [0.45, 0.35]]) b.add(cyl(0.035, 0.035, 0.9, 4), WOOD, M(x + dx, 0.53, z + dz));
+    b.add(gable(1.1, 0.3, 0.9), TEAM, M(x, 0.98, z), 1);
+    b.add(box(0.9, 0.35, 0.6), PLANK, M(x, 0.26, z));
+    b.add(ico(0.12, 0), [0xd9b13b, 0x8ab24a, 0xc0522f, 0x9a6a44][(Math.round(x + z * 3) + 8) % 4], M(x - 0.2, 0.5, z));
+    b.add(cyl(0.12, 0.1, 0.22, 6), 0x9a6a44, M(x + 0.22, 0.54, z));
+  }
+  // 糧袋、木箱
+  for (const [x, z] of [[0, -0.4], [0.25, -0.2], [-0.2, -0.15]]) b.add(ico(0.18, 0), 0xd9c79a, M(x, 0.25, z));
+  b.add(box(0.4, 0.4, 0.4), PLANK, M(0, 0.28, 0.6));
+  return b.build();
+}
+
+/** 船塢（3×3，蓋在岸邊）：木棧橋、船棚、吊杆 */
+function dock(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  // 木樁（往下伸進水裡）
+  for (const x of [-1.3, -0.45, 0.45, 1.3]) for (const z of [-1.3, -0.45, 0.45, 1.3]) b.add(cyl(0.07, 0.07, 1.6, 5), 0x5a3a20, M(x, -0.6, z));
+  b.add(box(2.95, 0.12, 2.95), PLANK, M(0, 0.12, 0));
+  for (let k = 0; k < 7; k++) b.add(box(2.95, 0.02, 0.05), 0x6a4224, M(0, 0.19, -1.35 + k * 0.45));
+  // 船棚
+  for (const x of [-1.1, 1.1]) for (const z of [-1.1, 0.2]) b.add(cyl(0.06, 0.06, 1.3, 5), WOOD, M(x, 0.83, z));
+  b.add(gable(2.7, 0.55, 1.9), THATCH, M(0, 1.45, -0.45));
+  ridge(b, 0, 2.0, -0.45, 2.7);
+  // 小船骨架
+  b.add(box(0.5, 0.2, 1.4), 0x8a5a32, M(0.3, 0.3, -0.45));
+  // 吊杆
+  b.add(cyl(0.04, 0.05, 1.6, 5), WOOD, M(-1.2, 0.98, 1.15));
+  b.add(cyl(0.025, 0.025, 1.0, 4), WOOD, M(-0.85, 1.7, 1.15, 0, 0, -1.1));
+  b.add(box(0.03, 0.4, 0.03), 0xd9c79a, M(-0.45, 1.5, 1.15));
+  // 漁網、木桶
+  b.add(box(0.6, 0.04, 0.5), 0xb8a87a, M(0.8, 0.22, 1.0));
+  b.add(cyl(0.14, 0.12, 0.3, 7), 0x7a4a2a, M(1.15, 0.33, 0.6));
+  banner(b, 1.3, 1.3, 2.0, 0.9);
+  return b.build();
+}
+
+/** 城門（1×1）：城牆段 ＋ 門洞 ＋ 門樓 */
+function gate(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(box(1.02, 0.6, 1.02), 0xa39684, M(0, -0.1, 0));
+  for (const x of [-0.4, 0.4]) b.add(box(0.22, 1.3, 1.02), 0xa39684, M(x, 0.65, 0));
+  b.add(box(1.02, 0.3, 1.02), 0xa39684, M(0, 1.15, 0));
+  b.add(box(0.58, 0.95, 0.06), 0x5a3a20, M(0, 0.48, 0.3));
+  b.add(box(0.58, 0.95, 0.06), 0x5a3a20, M(0, 0.48, -0.3));
+  for (const y of [0.25, 0.7]) b.add(box(0.6, 0.05, 0.08), IRON_DARK, M(0, y, 0.33));
+  b.add(pyramid(1.2, 0.4, 1.2), THATCH, M(0, 1.3, 0));
+  b.add(box(0.3, 0.16, 0.03), TEAM, M(0, 1.15, 0.53), 1);
+  return b.build();
+}
+const IRON_DARK = 0x4a4f55;
+
+/** 奇觀「銅雀台」（5×5）：三層高台、主殿、銅雀、四角闕樓 */
+function wonder(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(box(4.95, 1.0, 4.95), 0xd8d2c4, M(0, -0.3, 0));
+  // 三層台基
+  b.add(box(4.6, 0.5, 4.6), 0xd8d2c4, M(0, 0.45, 0));
+  b.add(box(3.6, 0.5, 3.6), 0xcfc8b8, M(0, 0.95, 0));
+  b.add(box(2.6, 0.45, 2.6), 0xc4bca8, M(0, 1.42, 0));
+  for (const s of [4.62, 3.62, 2.62]) b.add(box(s, 0.06, s), 0xa8322d, M(0, s === 4.62 ? 0.72 : s === 3.62 ? 1.22 : 1.66, 0));
+  // 正面大台階
+  b.add(box(0.9, 0.08, 1.4), 0xbab2a0, M(0, 0.82, 2.0, -0.6));
+  // 主殿
+  b.add(box(1.9, 1.1, 1.5), 0xb8392f, M(0, 2.2, 0));
+  for (const x of [-0.85, -0.3, 0.3, 0.85]) b.add(cyl(0.07, 0.08, 1.1, 6), 0x8f2a24, M(x, 2.2, 0.8));
+  brackets(b, 2.0, 2.75, 0.8);
+  b.add(pyramid(2.7, 0.75, 2.3), 0x34383e, M(0, 2.78, 0));
+  b.add(box(1.0, 0.5, 0.8), 0xb8392f, M(0, 3.7, 0));
+  b.add(pyramid(1.5, 0.6, 1.2), 0x34383e, M(0, 3.92, 0));
+  // 銅雀（屋頂上展翅的金鳥）
+  b.add(ico(0.16, 0), GOLD, M(0, 4.62, 0));
+  b.add(cone(0.08, 0.3, 4), GOLD, M(0, 4.6, 0.22, Math.PI / 2));
+  for (const k of [-1, 1]) b.add(box(0.5, 0.04, 0.2), GOLD, M(k * 0.3, 4.68, 0, 0, 0, k * 0.4));
+  b.add(cone(0.1, 0.25, 4), GOLD, M(0, 4.65, -0.22, -Math.PI / 2));
+  // 四角闕樓
+  for (const [x, z] of [[-2.0, -2.0], [2.0, -2.0], [-2.0, 2.0], [2.0, 2.0]]) {
+    b.add(box(0.55, 1.2, 0.55), 0xb8392f, M(x, 1.3, z));
+    b.add(pyramid(0.8, 0.4, 0.8), 0x34383e, M(x, 1.9, z));
+    b.add(cone(0.06, 0.2, 4), GOLD, M(x, 2.38, z));
+  }
+  banner(b, -1.5, 1.5, 3.0, 1.1);
+  banner(b, 1.5, 1.5, 3.0, 1.1);
+  return b.build();
+}
+
 export const BUILDING_MODELS: Record<string, () => THREE.BufferGeometry> = {
   workshop,
   archery,
@@ -343,6 +494,12 @@ export const BUILDING_MODELS: Record<string, () => THREE.BufferGeometry> = {
   mine_camp: mineCamp,
   farm,
   barracks,
+  fortress,
+  academy,
+  market,
+  dock,
+  gate,
+  wonder,
 };
 
 /** 模型高度（建造中的縮放、點選判定用） */
@@ -361,6 +518,12 @@ export const BUILDING_HEIGHT: Record<string, number> = {
   palisade: 1.1,
   wall: 1.3,
   workshop: 2.6,
+  fortress: 3.6,
+  academy: 1.9,
+  market: 2.0,
+  dock: 2.0,
+  gate: 1.6,
+  wonder: 4.8,
 };
 
 /** 依時代建模（同一棟建築四個時代外觀不同） */

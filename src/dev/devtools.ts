@@ -10,6 +10,8 @@ import { NAV, UNIT_DEFS } from '../sim/core/world';
 import { PASS_BLOCKED, PASS_SHALLOW } from '../sim/map/grid';
 import { Sim } from '../sim/sim';
 import { AIPlayer } from '../ai/ai';
+import { SKILLS } from '../sim/systems/abilities';
+import { showAgeBanner } from '../ui/menus';
 import { applyBox, detectLayout, HUD_KEYS, HUD_NAMES, LAYOUTS, type Anchor, type HudBox, type HudKey, type LayoutMode } from '../ui/layout';
 
 const STORE = 'empiresGame.dev';
@@ -37,6 +39,7 @@ export class DevTools {
     drag: false,
     anim: 'auto' as AnimName | 'auto',
     spawnType: 'spearman',
+    cutInHero: 'hero_guanyu',
     spawnPlayer: 0,
     spawnCount: 50,
     passOverlay: false,
@@ -87,6 +90,7 @@ export class DevTools {
 
     this.buildPerf();
     this.buildStress();
+    this.buildFeatures();
     this.buildSim();
     this.buildCamera();
     this.buildLight();
@@ -154,6 +158,47 @@ export class DevTools {
       if (on) g.ais.push(new AIPlayer(g.sim, 1, g.setup.ai));
     });
     f.add({ go: () => g.sim.issue({ t: 'clear' }) }, 'go').name('🗑 清除全部單位');
+  }
+
+  /** 三國特色：武將技、計策、演出與結算預覽（docs/02） */
+  private buildFeatures(): void {
+    const g = this.game;
+    const f = this.gui.addFolder('三國特色（武將／計策／演出）');
+    const sim = g.sim;
+    f.add({ go: () => {
+      const w = sim.world;
+      for (let id = 0; id < w.high; id++) w.skillReady[id] = 0;
+      for (const p of sim.players) p.stratagemReady.clear();
+    } }, 'go').name('⏱ 清除所有技能與計策冷卻');
+    f.add({ go: () => {
+      const hero = [...g.selected].find((id) => UNIT_DEFS[sim.world.utype[id]].hero);
+      if (hero === undefined) return g.hud.toast('先選一位武將');
+      sim.world.skillReady[hero] = 0;
+      g.castSkill(hero);
+    } }, 'go').name('✨ 選取的武將立刻施放');
+    const at = () => {
+      const t = g.cam.target;
+      return { x: Math.round(t.x * 1024), y: Math.round(t.z * 1024) };
+    };
+    f.add({ go: () => {
+      const p = at();
+      sim.abilities.areas.push({ kind: 'fire', owner: g.myPlayer, x: p.x, y: p.y, r: 4 * 1024, until: sim.tick + 80, dps: 20 });
+    } }, 'go').name('🔥 鏡頭中心放火（8 秒）');
+    f.add({ go: () => {
+      const p = at();
+      sim.abilities.areas.push({ kind: 'slow', owner: g.myPlayer, x: p.x, y: p.y, r: 6 * 1024, until: sim.tick + 120, dps: 0 });
+    } }, 'go').name('☯ 鏡頭中心八陣圖（12 秒）');
+    f.add(this.view, 'cutInHero', Object.fromEntries(UNIT_DEFS.filter((u) => u.hero).map((u) => [u.name, u.id]))).name('演出武將');
+    f.add({ go: () => {
+      const id = this.view.cutInHero;
+      g.hud.cutIn(UNIT_DEFS.find((u) => u.id === id)?.name ?? '', SKILLS[id]?.name ?? '', true);
+    } }, 'go').name('🎬 預覽武將技橫幅');
+    f.add({ go: () => g.hud.cutIn('曹操', '挾天子以令諸侯', false) }, 'go').name('🎬 預覽敵方橫幅');
+    f.add({ go: () => showAgeBanner(document.body, '三分天下', '解鎖工坊、衝車、重騎與兵種升級') }, 'go').name('📜 預覽升時代演出');
+    for (const [reason, label] of [['conquest', '征服'], ['seal', '稱帝'], ['wonder', '奇觀'], ['resign', '投降']] as const) {
+      f.add({ go: () => g.previewGameOver(true, reason) }, 'go').name(`🏆 預覽勝利（${label}）`);
+    }
+    f.add({ go: () => g.previewGameOver(false, 'seal') }, 'go').name('💀 預覽戰敗（敵方稱帝）');
   }
 
   private buildSim(): void {

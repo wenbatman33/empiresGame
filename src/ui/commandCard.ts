@@ -1,6 +1,7 @@
 // 指令卡（docs/01 §4、§8）：依選取內容顯示建造／生產／集結等按鈕
 // PC 快捷鍵避開 WASD（鏡頭）、H（回城）、P（暫停）
 import { BUILDING_DEFS, BUILDING_INDEX, RES_NAMES, TECH_DEFS, UNIT_DEFS, type Cost, type TechDef } from '../sim/core/defs';
+import { SKILLS, STRATAGEMS } from '../sim/systems/abilities';
 import type { Game } from '../game';
 
 export interface CardButton {
@@ -52,12 +53,31 @@ export const UNIT_ICONS: Record<string, string> = {
   trebuchet: '☄️',
 };
 BUILD_ICONS.workshop = '🛠️';
+Object.assign(BUILD_ICONS, { market: '🏪', dock: '⚓', gate: '🚪', fortress: '🏰', academy: '📚', wonder: '🏛️' });
+Object.assign(UNIT_ICONS, {
+  tiger_cav: '🐯',
+  repeater: '🎯',
+  danyang: '🗡️',
+  ox_cart: '🐂',
+  strategist: '📜',
+  fishing_boat: '🛶',
+  transport: '⛴️',
+  galley: '🚣',
+  mengchong: '🛳️',
+  louchuan: '🚢',
+  fire_ship: '🔥',
+  phantom: '👻',
+});
+for (const u of UNIT_DEFS) if (u.hero) UNIT_ICONS[u.id] = '🌟';
+const STRATAGEM_ICONS: Record<string, string> = { fire: '🔥', decoy: '👻', fortify: '🧱', discord: '🗣️', plum: '🍑', empty_fort: '🏯', east_wind: '🌬️' };
 
 const TECH_ICONS: Record<string, string> = {
   age2: '📜', age3: '📜', age4: '📜', loom: '🧵', wheelbarrow: '🛞', handcart: '🛒', plow: '🌱', seeder: '🌾', waterwheel: '💧',
   axe: '🪓', saw: '🪚', twoman: '🪚', pick: '⛏️', stonecut: '🪨', shaft: '⛏️', forge: '⚔️', steel: '⚔️', hundred: '⚔️',
   fletch: '🏹', ironhead: '🏹', piercing: '🏹', inf1: '🥋', inf2: '🥋', inf3: '🥋', cav1: '🐴', cav2: '🐴', cav3: '🐴',
   arc1: '🦺', arc2: '🦺', arc3: '🦺', up_elite_sword: '⬆️', up_halberd: '⬆️', up_crossbow: '⬆️', up_elite_ha: '⬆️', up_swift: '⬆️', up_iron: '⬆️',
+  masonry: '🧱', medicine: '💊', persuasion: '🗣️', crossbow_mech: '⚙️', mohist: '🛡️', thunder: '💥', wuzhu: '🪙', shipwright: '⚓',
+  tuntian: '🌾', tiger_elite: '🐯', five_tigers: '🐅', repeater_up: '🎯', jiangdong: '⛵', fire_arrows: '🔥',
 };
 const TARGET_NAMES: Record<string, string> = {
   melee: '近戰兵',
@@ -88,7 +108,7 @@ export function techSummary(t: TechDef): string {
   return [...new Set(parts)].join('、');
 }
 /** 民夫建造選單：第一頁經濟、第二頁軍事與防禦 */
-const BUILD_ORDER = ['house', 'farm', 'lumber_camp', 'mine_camp', 'granary', 'barracks', 'archery', 'stable', 'blacksmith', 'tower', 'palisade', 'wall', 'workshop', 'town_hall'];
+const BUILD_ORDER = ['house', 'farm', 'lumber_camp', 'mine_camp', 'granary', 'dock', 'barracks', 'archery', 'stable', 'blacksmith', 'market', 'tower', 'palisade', 'wall', 'gate', 'workshop', 'fortress', 'academy', 'town_hall', 'wonder'];
 const STANCE_NAMES = ['進攻', '防守', '堅守', '不還擊'];
 
 export function costText(c: Cost): string {
@@ -125,7 +145,34 @@ export class CommandCard {
       out.push({ id: 'cancel', icon: '✕', label: '取消', tip: '取消', enabled: true, action: () => (g.attackMoveMode = g.patrolMode = false) });
       return out;
     }
+    if (g.targeting) {
+      out.push({ id: 'cancel', icon: '✕', label: '取消', tip: '取消施放', enabled: true, action: () => (g.targeting = null) });
+      return out;
+    }
     if (own.length) {
+      // 武將技排第一個（PC 快捷鍵 Q）
+      for (const id of own.filter((i) => UNIT_DEFS[w.utype[i]].hero).slice(0, 2)) {
+        const u = UNIT_DEFS[w.utype[id]];
+        const sk = SKILLS[u.id];
+        if (!sk) continue;
+        const cd = Math.max(0, Math.ceil((w.skillReady[id] - sim.tick) / 10));
+        out.push({
+          id: `skill:${id}`,
+          icon: '✨',
+          label: sk.name,
+          tip: `${u.name}「${sk.name}」：${sk.desc}（冷卻 ${sk.cd} 秒）${cd ? `\n冷卻中，還要 ${cd} 秒` : ''}`,
+          enabled: cd === 0,
+          badge: cd ? String(cd) : undefined,
+          action: () => g.castSkill(id),
+        });
+      }
+      // 運兵船：卸兵
+      const ship = own.find((i) => UNIT_DEFS[w.utype[i]].capacity);
+      if (ship !== undefined) {
+        let n = 0;
+        for (let j = 0; j < w.high; j++) if (w.alive[j] && w.aboard[j] === ship) n++;
+        out.push({ id: 'unload', icon: '⚓', label: '卸兵', tip: '卸兵：點選要靠岸的地點（上船：選兵後點自家運兵船）', enabled: n > 0, badge: n ? String(n) : undefined, action: () => g.unloadShip(ship) });
+      }
       const workers = own.some((id) => UNIT_DEFS[w.utype[id]].worker);
       if (workers) {
         for (const id of BUILD_ORDER) {
@@ -136,9 +183,9 @@ export class CommandCard {
             id: `build:${id}`,
             icon: BUILD_ICONS[id] ?? '🏠',
             label: def.name,
-            tip: locked ? `${def.name}：需要「${AGE_NAMES[def.age]}」時代` : `蓋${def.name}（${costText(def.cost)}）`,
-            cost: def.cost,
-            enabled: !locked && pl.canAfford(def.cost),
+            tip: locked ? `${def.name}：需要「${AGE_NAMES[def.age]}」時代` : `蓋${def.name}（${costText(pl.buildingCost(bt))}）`,
+            cost: pl.buildingCost(bt),
+            enabled: !locked && pl.canAfford(pl.buildingCost(bt)),
             action: () => g.startPlacing(bt),
           });
         }
@@ -181,15 +228,18 @@ export class CommandCard {
         for (const base of def.trains) {
           const ut = pl.upgrade[base];
           const u = UNIT_DEFS[ut];
+          // 其他勢力的專屬兵種、武將不顯示
+          if (u.faction && u.faction !== pl.faction) continue;
+          const block = g.sim.economy.trainBlocker(g.myPlayer, ut);
           const locked = UNIT_DEFS[base].age > pl.age;
           const queued = bs.queue[b].filter((q) => q === ut).length;
           out.push({
             id: `train:${u.id}`,
             icon: UNIT_ICONS[u.id] ?? '👤',
             label: u.name,
-            tip: locked ? `${u.name}：需要「${AGE_NAMES[u.age]}」時代` : `訓練${u.name}（${costText(u.cost)}，${u.trainTicks / 10} 秒）`,
-            cost: u.cost,
-            enabled: !locked && pl.canAfford(u.cost) && !researching,
+            tip: locked ? `${u.name}：需要「${AGE_NAMES[u.age]}」時代` : `訓練${u.name}（${costText(pl.unitCost(ut))}，${Math.round(pl.trainTicks(ut) / 10)} 秒）${block ? `\n⚠ ${block}` : ''}`,
+            cost: pl.unitCost(ut),
+            enabled: !locked && !block && pl.canAfford(pl.unitCost(ut)) && !researching,
             badge: queued ? String(queued) : undefined,
             action: () => g.train(b, ut),
           });
@@ -200,6 +250,39 @@ export class CommandCard {
         }
         if (def.id === 'farm') {
           out.push({ id: 'reseed', icon: '♻️', label: '自動重播', tip: '農田耗盡時自動重播（60 木）', enabled: true, active: pl.autoReseed, action: () => g.toggleReseed() });
+        }
+        if (def.id === 'town_hall') {
+          // 民夫分配助手：點一下就調一名民夫（閒置的優先）去採該資源
+          const cnt = g.villagerCounts();
+          const icons = ['🌾', '🪵', '🪙', '🪨'];
+          for (let k = 0; k < 4; k++) {
+            out.push({ id: `assign:${k}`, icon: icons[k], label: `＋${RES_NAMES[k]}`, tip: `民夫分配：派 1 名民夫去採${RES_NAMES[k]}（閒置的優先，否則從人最多的資源調）\n目前 糧${cnt[0]} 木${cnt[1]} 金${cnt[2]} 石${cnt[3]} 建造${cnt[4]} 閒置${cnt[5]}`, enabled: true, badge: String(cnt[k]), action: () => g.assignVillager(k) });
+          }
+        }
+        if (def.id === 'academy') {
+          for (const [key, st] of Object.entries(STRATAGEMS)) {
+            if (st.faction && st.faction !== pl.faction) continue;
+            const block = sim.abilities.stratagemBlocker(g.myPlayer, key);
+            const ready = pl.stratagemReady.get(key) ?? 0;
+            const cd = Math.max(0, Math.ceil((ready - sim.tick) / 10));
+            out.push({
+              id: `strat:${key}`,
+              icon: STRATAGEM_ICONS[key] ?? '📜',
+              label: st.name,
+              tip: `計策「${st.name}」：${st.desc}（${costText([0, 0, st.gold, st.stone])}，冷卻 ${st.cd} 秒）${block ? `\n⚠ ${block}` : ''}`,
+              cost: [0, 0, st.gold, st.stone],
+              enabled: !block,
+              badge: cd ? String(cd) : undefined,
+              action: () => g.castStratagem(key),
+            });
+          }
+        }
+        if (def.id === 'market') {
+          for (const [k, name] of [[0, '糧'], [1, '木'], [3, '石']] as const) {
+            const price = pl.price[k];
+            out.push({ id: `buy:${k}`, icon: '🛒', label: `買${name}`, tip: `用 ${Math.trunc((price * (100 + pl.tradeFee)) / 100)} 金買 100 ${name}`, enabled: pl.res[2] >= Math.trunc((price * (100 + pl.tradeFee)) / 100), action: () => g.trade(k, true) });
+            out.push({ id: `sell:${k}`, icon: '💰', label: `賣${name}`, tip: `賣 100 ${name}換 ${Math.trunc((price * (100 - pl.tradeFee)) / 100)} 金`, enabled: pl.res[k] >= 100, action: () => g.trade(k, false) });
+          }
         }
       }
       out.push({ id: 'destroy', icon: '🗑️', label: '拆除', tip: '拆除這棟建築（不退費；未開工的地基全額退費）', enabled: true, danger: true, action: () => g.destroySelectedBuilding() });

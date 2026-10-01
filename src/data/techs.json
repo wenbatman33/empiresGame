@@ -34,5 +34,19 @@
   {"id": "up_crossbow", "name": "弩兵", "building": "archery", "age": 3, "cost": {"food": 125, "gold": 85}, "time": 35, "effects": [{"upgrade": ["archer", "crossbowman"]}]},
   {"id": "up_elite_ha", "name": "精銳弓騎", "building": "archery", "age": 4, "cost": {"food": 300, "gold": 250}, "time": 50, "effects": [{"target": "unit:horse_archer", "stat": "hp", "add": 10}, {"target": "unit:horse_archer", "stat": "attack", "add": 1}]},
   {"id": "up_swift", "name": "驍騎", "building": "stable", "age": 3, "cost": {"food": 150, "gold": 50}, "time": 45, "effects": [{"upgrade": ["light_cav", "swift_cav"]}]},
-  {"id": "up_iron", "name": "鐵騎", "building": "stable", "age": 4, "cost": {"food": 300, "gold": 300}, "time": 60, "effects": [{"upgrade": ["heavy_cav", "iron_cav"]}]}
+  {"id": "up_iron", "name": "鐵騎", "building": "stable", "age": 4, "cost": {"food": 300, "gold": 300}, "time": 60, "effects": [{"upgrade": ["heavy_cav", "iron_cav"]}]},
+  {"id": "masonry", "name": "築城術", "building": "academy", "age": 3, "cost": {"food": 200, "stone": 150}, "time": 50, "effects": [{"target": "player", "stat": "buildingHp", "mul": 1.1}]},
+  {"id": "medicine", "name": "醫書", "building": "academy", "age": 3, "cost": {"gold": 200}, "time": 40, "effects": [{"target": "player", "stat": "heal", "mul": 1.5}]},
+  {"id": "persuasion", "name": "遊說", "building": "academy", "age": 3, "cost": {"gold": 250}, "time": 50, "effects": [{"target": "player", "stat": "convert", "mul": 1.3}, {"target": "unit:strategist", "stat": "range", "add": 2}]},
+  {"id": "crossbow_mech", "name": "弩機改良", "building": "academy", "age": 3, "cost": {"wood": 200, "gold": 150}, "time": 50, "effects": [{"target": "building:tower", "stat": "range", "add": 1}, {"target": "building:town_hall", "stat": "range", "add": 1}, {"target": "building:fortress", "stat": "range", "add": 1}]},
+  {"id": "mohist", "name": "墨守", "building": "academy", "age": 4, "cost": {"food": 300, "stone": 200}, "time": 60, "effects": [{"target": "player", "stat": "buildingArmor", "add": 3}]},
+  {"id": "thunder", "name": "霹靂火", "building": "academy", "age": 4, "cost": {"wood": 300, "gold": 200}, "time": 60, "effects": [{"target": "unit:trebuchet", "stat": "attack", "mul": 1.2}]},
+  {"id": "wuzhu", "name": "五銖錢", "building": "market", "age": 3, "cost": {"food": 300, "wood": 200}, "time": 50, "effects": [{"target": "player", "stat": "tradeFee", "add": -15}]},
+  {"id": "shipwright", "name": "船匠", "building": "dock", "age": 2, "cost": {"wood": 150, "gold": 75}, "time": 40, "effects": [{"target": "tag:ship", "stat": "hp", "mul": 1.15}]},
+  {"id": "tuntian", "name": "屯田制", "building": "fortress", "age": 3, "cost": {"food": 200, "gold": 200}, "time": 50, "effects": [{"target": "player", "stat": "gather.farm", "mul": 1.1}, {"target": "player", "stat": "freeReseed", "add": 1}], "faction": "wei"},
+  {"id": "tiger_elite", "name": "虎豹精銳", "building": "fortress", "age": 4, "cost": {"food": 600, "gold": 400}, "time": 60, "effects": [{"target": "unit:tiger_cav", "stat": "hp", "add": 20}, {"target": "unit:tiger_cav", "stat": "attack", "add": 2}], "faction": "wei"},
+  {"id": "five_tigers", "name": "五虎將", "building": "fortress", "age": 4, "cost": {"food": 400, "gold": 400}, "time": 60, "effects": [{"target": "tag:hero", "stat": "hp", "mul": 1.2}], "faction": "shu"},
+  {"id": "repeater_up", "name": "連弩改良", "building": "fortress", "age": 4, "cost": {"wood": 300, "gold": 300}, "time": 50, "effects": [{"target": "unit:repeater", "stat": "volley", "add": 2}], "faction": "shu"},
+  {"id": "jiangdong", "name": "江東水師", "building": "fortress", "age": 3, "cost": {"wood": 300, "gold": 200}, "time": 50, "effects": [{"target": "tag:ship", "stat": "hp", "mul": 1.2}], "faction": "wu"},
+  {"id": "fire_arrows", "name": "火矢", "building": "fortress", "age": 4, "cost": {"wood": 400, "gold": 300}, "time": 60, "effects": [{"target": "player", "stat": "fireArrows", "add": 20}], "faction": "wu"}
 ]

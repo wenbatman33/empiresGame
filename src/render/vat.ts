@@ -43,7 +43,7 @@ export function bakeVat(model: ModelGeometry, kind: WeaponKind): BakedModel {
     const spec = anims[a];
     for (let f = 0; f < spec.frames; f++) {
       const t = spec.loop ? f / spec.frames : f / (spec.frames - 1);
-      const pose = kind === 'ram' || kind === 'trebuchet' ? siegePose(kind, a, t) : poseAt(kind, a, t, model.mounted);
+      const pose = kind === 'ram' || kind === 'trebuchet' || kind === 'cart' || kind === 'ship' ? siegePose(kind, a, t) : poseAt(kind, a, t, model.mounted);
       // 根：位移 ＋ 以腳跟為軸傾倒
       rootM.makeTranslation(0, pose.root.y, pose.root.z);
       rootM.multiply(_t.makeTranslation(ROOT_PIVOT[0], ROOT_PIVOT[1], ROOT_PIVOT[2]));

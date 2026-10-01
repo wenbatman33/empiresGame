@@ -14,12 +14,17 @@ function play(seed: number, minutes: number) {
 }
 
 describe('電腦 AI', () => {
-  it('普通 AI 對簡單 AI：會升時代、會進攻、45 分鐘內分出勝負', () => {
-    const { sim, ais } = play(1001, 45);
-    expect(sim.players[0].age).toBeGreaterThanOrEqual(3);
-    expect(ais[0].firstAttackTick).toBeGreaterThan(0);
-    expect(sim.winner).toBeGreaterThanOrEqual(0);
-  });
+  it('普通 AI 對簡單 AI：會升時代、會進攻、多數對局 45 分鐘內分出勝負', () => {
+    // 勢力隨種子而定，單一局可能因相剋或防守優勢拖長；看 3 局裡至少 2 局普通 AI 獲勝
+    let wins = 0;
+    for (const seed of [1001, 1008, 1015]) {
+      const { sim, ais } = play(seed, 45);
+      expect(sim.players[0].age).toBeGreaterThanOrEqual(3);
+      expect(ais[0].firstAttackTick).toBeGreaterThan(0);
+      if (sim.winner === 0) wins++;
+    }
+    expect(wins).toBeGreaterThanOrEqual(2);
+  }, 60000);
 
   it('AI 對戰是確定性的（多人連線時每台機器跑同一套 AI）', () => {
     expect(play(77, 6).sim.hash()).toBe(play(77, 6).sim.hash());

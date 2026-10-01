@@ -29,7 +29,6 @@ export class MovementSystem {
     const sim = this.sim;
     const w = sim.world;
     const m = sim.map;
-    const pf = sim.pf;
     const high = w.high;
 
     for (let id = 0; id < high; id++) {
@@ -40,7 +39,8 @@ export class MovementSystem {
 
     // 1. 依導航方式決定這個 tick 往哪走
     for (let id = 0; id < high; id++) {
-      if (!w.alive[id] || w.state[id] !== S.Move) continue;
+      if (!w.alive[id] || w.state[id] !== S.Move || w.aboard[id] >= 0) continue;
+      const pf = sim.pfOf(id);
       const x = w.x[id];
       const y = w.y[id];
       const gx = w.goalX[id];
@@ -96,7 +96,8 @@ export class MovementSystem {
         ty = path[k * 2 + 1];
       }
 
-      const step = Math.trunc((w.speed[id] * m.speedTenths(x >> FX_SHIFT, y >> FX_SHIFT)) / 10);
+      const tenths = pf.water ? 10 : m.speedTenths(x >> FX_SHIFT, y >> FX_SHIFT);
+      const step = Math.trunc((Math.trunc((w.speed[id] * tenths) / 10) * sim.speedPct(id)) / 100);
       const gdx = gx - x;
       const gdy = gy - y;
       if (gdx * gdx + gdy * gdy <= step * step) {
@@ -120,7 +121,7 @@ export class MovementSystem {
 
     // 3. 抵達與卡住判定
     for (let id = 0; id < high; id++) {
-      if (!w.alive[id] || w.state[id] !== S.Move) continue;
+      if (!w.alive[id] || w.state[id] !== S.Move || w.aboard[id] >= 0) continue;
       const gdx = w.goalX[id] - w.x[id];
       const gdy = w.goalY[id] - w.y[id];
       const gd2 = gdx * gdx + gdy * gdy;
@@ -140,7 +141,7 @@ export class MovementSystem {
         sim.arrive(id);
       } else if (w.stuck[id] >= 30) {
         // 卡太久：直走或路徑模式就重新尋路；Flow 模式通常是隘口塞車，繼續等
-        if (w.nav[id] !== NAV.Flow) sim.setPath(id, pf.findPath(w.x[id], w.y[id], w.goalX[id], w.goalY[id]));
+        if (w.nav[id] !== NAV.Flow) sim.setPath(id, sim.pfOf(id).findPath(w.x[id], w.y[id], w.goalX[id], w.goalY[id]));
         w.stuck[id] = 0;
       }
     }
@@ -155,24 +156,25 @@ export class MovementSystem {
     ny = Math.max(r, Math.min(m.heightFx - r - 1, ny));
     const x = w.x[id];
     const y = w.y[id];
-    if (m.walkableFx(nx, ny)) this.place(id, nx, ny);
-    else if (m.walkableFx(nx, y)) this.place(id, nx, y);
-    else if (m.walkableFx(x, ny)) this.place(id, x, ny);
+    const sim = this.sim;
+    if (sim.canStand(id, nx, ny)) this.place(id, nx, ny);
+    else if (sim.canStand(id, nx, y)) this.place(id, nx, y);
+    else if (sim.canStand(id, x, ny)) this.place(id, x, ny);
   }
 
   /** 放到 (x,y)，並把身體推離相鄰的牆 */
   private place(id: number, x: number, y: number): void {
     const w = this.sim.world;
-    const m = this.sim.map;
+    const pf = this.sim.pfOf(id);
     const r = w.radius[id];
     const tx = x >> FX_SHIFT;
     const ty = y >> FX_SHIFT;
     const lx = x - (tx << FX_SHIFT);
     const ly = y - (ty << FX_SHIFT);
-    if (lx < r && !m.walkable(tx - 1, ty)) x = (tx << FX_SHIFT) + r;
-    else if (lx > ONE - r && !m.walkable(tx + 1, ty)) x = ((tx + 1) << FX_SHIFT) - r;
-    if (ly < r && !m.walkable(tx, ty - 1)) y = (ty << FX_SHIFT) + r;
-    else if (ly > ONE - r && !m.walkable(tx, ty + 1)) y = ((ty + 1) << FX_SHIFT) - r;
+    if (lx < r && !pf.ok(tx - 1, ty)) x = (tx << FX_SHIFT) + r;
+    else if (lx > ONE - r && !pf.ok(tx + 1, ty)) x = ((tx + 1) << FX_SHIFT) - r;
+    if (ly < r && !pf.ok(tx, ty - 1)) y = (ty << FX_SHIFT) + r;
+    else if (ly > ONE - r && !pf.ok(tx, ty + 1)) y = ((ty + 1) << FX_SHIFT) - r;
     w.x[id] = x;
     w.y[id] = y;
   }
@@ -192,13 +194,13 @@ export class MovementSystem {
       cx[id] = 0;
       cy[id] = 0;
       this.touched[id] = 0;
-      if (!w.alive[id] || w.state[id] === S.Dead) continue;
+      if (!w.alive[id] || w.state[id] === S.Dead || w.aboard[id] >= 0) continue;
       const c = (w.y[id] >> FX_SHIFT) * W + (w.x[id] >> FX_SHIFT);
       next[id] = head[c];
       head[c] = id;
     }
     for (let i = 0; i < high; i++) {
-      if (!w.alive[i] || w.state[i] === S.Dead) continue;
+      if (!w.alive[i] || w.state[i] === S.Dead || w.aboard[i] >= 0) continue;
       const xi = w.x[i];
       const yi = w.y[i];
       const ri = w.radius[i];
@@ -212,7 +214,7 @@ export class MovementSystem {
           const cxx = tx + ox;
           if (cxx < 0 || cxx >= W) continue;
           for (let j = head[cyy * W + cxx]; j !== -1; j = next[j]) {
-            if (j <= i || w.state[j] === S.Dead) continue;
+            if (j <= i || w.state[j] === S.Dead || w.aboard[j] >= 0) continue;
             const dx = w.x[j] - xi;
             const dy = w.y[j] - yi;
             const rr = ri + w.radius[j];

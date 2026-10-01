@@ -213,6 +213,77 @@ body {
   font-size: 13px;
 }
 
+/* 武將技演出橫幅（docs/02 §3：技能施放時的 cut-in） */
+.cutin {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 32%;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 18px;
+  padding: 10px 0;
+  background: linear-gradient(90deg, transparent, rgba(120, 20, 14, 0.88) 18%, rgba(120, 20, 14, 0.88) 82%, transparent);
+  color: #ffe9b0;
+  font-family: var(--title-font, serif);
+  pointer-events: none;
+  animation: cutin 1.6s ease-out forwards;
+  z-index: 30;
+}
+.cutin.enemy {
+  background: linear-gradient(90deg, transparent, rgba(20, 20, 30, 0.88) 18%, rgba(20, 20, 30, 0.88) 82%, transparent);
+  color: #ffb0a0;
+}
+.cutin .who {
+  font-size: 20px;
+  opacity: 0.85;
+}
+.cutin .what {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  text-shadow: 0 2px 0 #000, 0 0 12px rgba(255, 180, 60, 0.6);
+}
+#hud[data-layout='mobile'] .cutin .what {
+  font-size: 24px;
+}
+@keyframes cutin {
+  0% {
+    transform: translateX(-60%) skewX(-12deg);
+    opacity: 0;
+  }
+  15% {
+    transform: translateX(0) skewX(-12deg);
+    opacity: 1;
+  }
+  75% {
+    transform: translateX(4%) skewX(-12deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(60%) skewX(-12deg);
+    opacity: 0;
+  }
+}
+.top-row .fac {
+  padding: 0 8px;
+  border-radius: 6px;
+  font-weight: 900;
+}
+.fac-wei {
+  background: #2a4a8a;
+  color: #e8eeff;
+}
+.fac-shu {
+  background: #2f7a3e;
+  color: #eaffea;
+}
+.fac-wu {
+  background: #a8322d;
+  color: #fff0e8;
+}
+
 /* 直向提示（只在觸控直向出現） */
 .rotate-hint {
   display: none;
@@ -458,8 +529,8 @@ body {
   position: fixed;
   inset: 0;
   z-index: 95;
-  display: grid;
-  place-items: center;
+  /* flex ＋ margin:auto：放得下時置中，放不下時可以捲到頂 */
+  display: flex;
   padding: 16px;
   background: radial-gradient(circle at 50% 35%, #5a3d22 0%, #24170d 70%);
   overflow-y: auto;
@@ -468,6 +539,7 @@ body {
   background: rgba(15, 10, 6, 0.72);
 }
 .menu-card {
+  margin: auto;
   width: min(460px, 100%);
   background: linear-gradient(#3a2818, #2a1d12);
   border: 3px solid var(--gold);
@@ -657,4 +729,27 @@ body:has(#hud[data-layout='mobile']) #menu-btn {
   white-space: nowrap;
   font-size: clamp(13px, 3.8vw, 18px);
   padding: 10px 6px;
+}
+
+/* 手機橫向（矮螢幕）：開局設定排成兩欄 */
+@media (max-height: 520px) {
+  .menu-card:has(.menu-setup:not([hidden])) {
+    width: min(760px, 100%);
+    padding: 10px 18px;
+    gap: 6px;
+  }
+  .menu-card:has(.menu-setup:not([hidden])) .menu-sub {
+    display: none;
+  }
+  .menu-setup:not([hidden]) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 18px;
+  }
+  .menu-setup .menu-row {
+    grid-column: 1 / -1;
+  }
+  .menu-title {
+    font-size: 34px;
+  }
 }

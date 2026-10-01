@@ -10,6 +10,8 @@ export const T = {
   Shallow: 3,
   Deep: 4,
   Forest: 5,
+  /** 山崖（蜀道），不可通行 */
+  Rock: 6,
 } as const;
 export type TileType = (typeof T)[keyof typeof T];
 
@@ -25,12 +27,23 @@ export const WATER_LEVEL = 40;
 
 /** 地形本身的通行性（不含建築、資源） */
 export function basePass(t: number): number {
-  return t === T.Deep || t === T.Forest ? PASS_BLOCKED : t === T.Shallow ? PASS_SHALLOW : PASS_LAND;
+  return t === T.Deep || t === T.Forest || t === T.Rock ? PASS_BLOCKED : t === T.Shallow ? PASS_SHALLOW : PASS_LAND;
+}
+
+/** 水面通行性：深水、淺灘可行船 */
+export function baseWaterPass(t: number): number {
+  return t === T.Deep || t === T.Shallow ? 1 : 0;
 }
 
 export class MapGrid {
   readonly tiles: Uint8Array;
   readonly pass: Uint8Array;
+  /** 水面通行性（船用）：1 ＝ 可行船 */
+  readonly wpass: Uint8Array;
+  /** 地圖類型 */
+  type = 'central';
+  /** 兵書、傳國玉璽的位置 */
+  itemSpots: { kind: 'scroll' | 'seal'; tx: number; ty: number }[] = [];
   /** (w+1)*(h+1) 個頂點高度 */
   readonly heights: Int16Array;
   /** 玩家起始點（格子座標） */
@@ -43,6 +56,7 @@ export class MapGrid {
   constructor(readonly w: number, readonly h: number) {
     this.tiles = new Uint8Array(w * h);
     this.pass = new Uint8Array(w * h).fill(PASS_LAND);
+    this.wpass = new Uint8Array(w * h);
     this.heights = new Int16Array((w + 1) * (h + 1));
   }
 
@@ -67,6 +81,7 @@ export class MapGrid {
     const i = this.idx(tx, ty);
     this.tiles[i] = t;
     this.pass[i] = basePass(t);
+    this.wpass[i] = baseWaterPass(t);
   }
 
   /** 該格移速倍率（十分比） */

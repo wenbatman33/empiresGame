@@ -1,7 +1,8 @@
 // HUD：資源列、小地圖、選取面板、左側按鈕、指令卡、放置確認列、框選框、提示訊息
 // 版面數值來自 layout.ts，DEV 工具可直接拖曳
 import { PLAYER_COLORS } from '../config';
-import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, TECH_DEFS, UNIT_DEFS } from '../sim/core/defs';
+import { BUILDING_DEFS, FACTION_NAMES, RESOURCE_KINDS, RES_NAMES, TECH_DEFS, UNIT_DEFS, WONDER_NAMES } from '../sim/core/defs';
+import { SKILLS } from '../sim/systems/abilities';
 import { S, TASK } from '../sim/core/world';
 import type { Game } from '../game';
 import { BUILD_ICONS, CommandCard, UNIT_ICONS } from './commandCard';
@@ -9,7 +10,7 @@ import { applyBox, HUD_KEYS, LAYOUTS, type HudKey } from './layout';
 
 const AGE_NAMES = ['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'];
 const RES_ICONS = ['🌾', '🪵', '🪙', '🪨'];
-const MINI_RES: Record<string, string> = { gold: '#ffd43b', stone: '#c9c5bd', berry: '#e0405a', deer: '#c98b4e', boar: '#5a463a' };
+const MINI_RES: Record<string, string> = { gold: '#ffd43b', stone: '#c9c5bd', berry: '#e0405a', deer: '#c98b4e', boar: '#5a463a', fish: '#9fd8ff' };
 
 export class Hud {
   readonly root: HTMLElement;
@@ -139,6 +140,15 @@ export class Hud {
     this.boxEl.style.display = 'none';
   }
 
+  /** 武將技演出：橫幅滑入「武將名 ── 技能名」 */
+  cutIn(hero: string, skill: string, mine: boolean): void {
+    const el = document.createElement('div');
+    el.className = `cutin${mine ? '' : ' enemy'}`;
+    el.innerHTML = `<span class="who">${hero}</span><span class="what">${skill}</span>`;
+    this.root.appendChild(el);
+    window.setTimeout(() => el.remove(), 1700);
+  }
+
   toast(msg: string, ms = 1800): void {
     this.toastEl.textContent = msg;
     this.toastEl.classList.add('show');
@@ -172,7 +182,9 @@ export class Hud {
     for (let id = 0; id < w.high; id++) {
       if (w.alive[id] && w.owner[id] === g.myPlayer && UNIT_DEFS[w.utype[id]].worker && w.task[id] === TASK.None && w.state[id] === S.Idle) idle++;
     }
-    const sig = `${pl.res.join(',')}|${pl.pop}/${pl.popCap}|${pl.housed}|${pl.age}|${time}|${g.paused}|${g.layoutMode}|${idle}`;
+    // 特殊勝利倒數（奇觀、玉璽）
+    const vic = victoryTimer(sim);
+    const sig = `${pl.res.join(',')}|${pl.pop}/${pl.popCap}|${pl.housed}|${pl.age}|${time}|${g.paused}|${g.layoutMode}|${idle}|${vic}`;
     if (sig === this.topSig) return;
     this.topSig = sig;
     const compact = g.layoutMode === 'mobile';
@@ -180,8 +192,10 @@ export class Hud {
     this.topText.innerHTML = [
       ...pl.res.map((v, i) => `<span>${RES_ICONS[i]}${compact ? '' : ` ${RES_NAMES[i]}`} ${v}</span>`),
       `<span${popCls}>👥 ${pl.pop}/${pl.popCap}</span>`,
+      `<span class="fac fac-${pl.faction}">${FACTION_NAMES[pl.faction] ?? ''}</span>`,
       `<span class="age">${AGE_NAMES[pl.age]}</span>`,
       `<span>⏱ ${time}</span>`,
+      vic ? `<span class="warn">${vic}</span>` : '',
       g.paused ? '<span class="warn">暫停</span>' : '',
     ].join('');
     this.idleBtn.innerHTML = `<span>閒置</span>${idle ? `<b class="badge">${idle}</b>` : ''}`;
@@ -201,6 +215,10 @@ export class Hud {
       sig += `place${g.placing.btype}${g.placing.valid}`;
       if (sig === this.selSig) return;
       html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div><b>放置${def.name}</b><div class="sub">${g.placing.valid ? (g.layoutMode === 'pc' ? '左鍵放置 · Shift 連續放 · 右鍵取消' : '點地面移動位置，再按「蓋這裡」') : '這裡不能蓋'}</div></div></div>`;
+    } else if (g.targeting) {
+      sig += `target${g.targeting.kind}`;
+      if (sig === this.selSig) return;
+      html = `<div class="hint">✨ ${g.targeting.kind === 'unload' ? '點選要靠岸卸兵的地點' : '點選施放地點'}（Esc 或「取消」鈕取消）</div>`;
     } else if (g.rallyMode || g.attackMoveMode || g.patrolMode) {
       sig += `mode${g.rallyMode}${g.attackMoveMode}${g.patrolMode}`;
       if (sig === this.selSig) return;
@@ -217,12 +235,26 @@ export class Hud {
       const color = PLAYER_COLORS[owner] ?? '#fff';
       if (g.selected.size === 1) {
         const def = UNIT_DEFS[w.utype[single]];
-        const pct = Math.max(0, Math.min(100, (w.hp[single] / def.hp) * 100));
+        const maxHp = sim.abilities.maxHp(single);
+        const pct = Math.max(0, Math.min(100, (w.hp[single] / maxHp) * 100));
         const task = w.task[single];
-        const doing = w.carry[single] > 0 ? `帶著 ${w.carry[single]} ${RES_NAMES[w.carryRes[single]]}` : task === TASK.Build ? '建造中' : task === TASK.Farm ? '耕田中' : task === TASK.Gather ? '採集中' : w.state[single] === S.Move ? '移動中' : '閒置';
-        sig += `one${single}|${w.hp[single]}|${doing}`;
+        let doing = w.carry[single] > 0 ? `帶著 ${w.carry[single]} ${RES_NAMES[w.carryRes[single]]}` : task === TASK.Build ? '建造中' : task === TASK.Farm ? '耕田中' : task === TASK.Gather ? '採集中' : w.state[single] === S.Move ? '移動中' : '閒置';
+        if (w.item[single] >= 0) doing = `攜帶${sim.abilities.items[w.item[single]]?.kind === 'seal' ? '傳國玉璽' : '兵書'}（送回書院）`;
+        if (w.fearUntil[single] > sim.tick) doing = '恐懼中';
+        if (def.capacity) {
+          let n = 0;
+          for (let j = 0; j < w.high; j++) if (w.alive[j] && w.aboard[j] === single) n += UNIT_DEFS[w.utype[j]].pop;
+          doing = `載兵 ${n}/${def.capacity}`;
+        }
+        let extra = '';
+        if (def.hero) {
+          const sk = SKILLS[def.id];
+          const cd = Math.max(0, Math.ceil((w.skillReady[single] - sim.tick) / 10));
+          extra = `<div class="sub">${'★'.repeat(w.level[single])} 威名 ${w.renown[single]} · ${sk ? `${sk.name}${cd ? `（${cd} 秒）` : '（可施放）'}` : ''}</div>`;
+        }
+        sig += `one${single}|${w.hp[single]}|${doing}|${extra}`;
         if (sig === this.selSig) return;
-        html = `<div class="sel-one"><span class="big">${UNIT_ICONS[def.id] ?? '👤'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b> <span class="sub">${doing}</span></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${w.hp[single]}/${def.hp}</span></div></div></div>`;
+        html = `<div class="sel-one"><span class="big">${UNIT_ICONS[def.id] ?? '👤'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b> <span class="sub">${doing}</span></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${w.hp[single]}/${maxHp}</span></div>${extra}</div></div>`;
       } else {
         const list = [...counts].sort((a, b) => a[0] - b[0]);
         sig += `many${g.selected.size}|${list.join(',')}`;
@@ -237,16 +269,24 @@ export class Hud {
       const pct = Math.round((bs.hp[b] / def.hp) * 100);
       const prog = bs.complete[b] ? 100 : Math.floor((bs.progress[b] / (def.buildTicks * 3)) * 100);
       const q = bs.queue[b];
-      const qp = q.length ? Math.floor((bs.qProgress[b] / UNIT_DEFS[q[0]].trainTicks) * 100) : 0;
+      const qp = q.length ? Math.floor((bs.qProgress[b] / sim.players[bs.owner[b]].trainTicks(q[0])) * 100) : 0;
       const pl = sim.players[bs.owner[b]];
       const rt = bs.research[b];
       const rp = rt >= 0 ? Math.floor((bs.rProgress[b] / TECH_DEFS[rt].ticks) * 100) : 0;
-      sig += `b${b}|${bs.hp[b]}|${prog}|${q.join(',')}|${qp}|${bs.food[b]}|${pl.housed}|${rt}|${rp}`;
+      sig += `b${b}|${bs.hp[b]}|${prog}|${q.join(',')}|${qp}|${bs.food[b]}|${pl.housed}|${rt}|${rp}|${pl.price.join(',')}|${def.wonder ? sim.tick : ''}`;
       if (sig === this.selSig) return;
       let extra = '';
       if (!bs.complete[b]) extra = `<div class="sub">建造中 ${prog}%</div>`;
       else if (def.id === 'farm') extra = `<div class="sub">剩餘 ${bs.food[b]} 糧${bs.farmer[b] >= 0 ? ' · 有人耕作' : ' · 沒人耕作'}</div>`;
-      else if (def.pop) extra = `<div class="sub">人口上限 ＋${def.pop}</div>`;
+      else if (def.id === 'academy') {
+        const items = sim.abilities.items.filter((it) => it.academy === b);
+        extra = `<div class="sub">${items.length ? `收藏：${items.map((it) => (it.kind === 'seal' ? '傳國玉璽' : '兵書')).join('、')}` : '謀士可把地圖上的兵書、玉璽送來這裡'}</div>`;
+      } else if (def.id === 'market') {
+        extra = `<div class="sub">行情（每 100 單位）：糧 ${pl.price[0]} · 木 ${pl.price[1]} · 石 ${pl.price[3]} 金</div>`;
+      } else if (def.wonder && sim.abilities.wonders.has(b)) {
+        const left = Math.max(0, 300 - Math.floor((sim.tick - sim.abilities.wonders.get(b)!) / 10));
+        extra = `<div class="sub">勝利倒數 ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</div>`;
+      } else if (def.pop) extra = `<div class="sub">人口上限 ＋${def.pop}</div>`;
       const queue = q.length
         ? `<div class="queue">${q
             .map((ut, i) => `<button class="qi" data-i="${i}" title="點一下取消">${UNIT_ICONS[UNIT_DEFS[ut].id] ?? '👤'}${i === 0 ? `<i style="width:${qp}%"></i>` : ''}</button>`)
@@ -385,8 +425,24 @@ export class Hud {
     for (let id = 0; id < w.high; id++) {
       if (!w.alive[id] || w.state[id] === 3) continue;
       if (w.owner[id] !== me && !g.units.seen[id]) continue;
+      if (w.aboard[id] >= 0) continue;
       ctx.fillStyle = g.selected.has(id) ? '#ffffff' : PLAYER_COLORS[w.owner[id]];
       ctx.fillRect(g.units.wx[id] * sx - dot / 2, g.units.wz[id] * sy - dot / 2, dot, dot);
+    }
+    // 兵書（白）與玉璽（金，大一點）
+    for (const it of sim.abilities.items) {
+      if (it.carrier >= 0 || it.academy >= 0) continue;
+      const tx = it.x / 1024;
+      const tz = it.y / 1024;
+      if (!g.isExplored(Math.floor(tx), Math.floor(tz))) continue;
+      const r = it.kind === 'seal' ? dot * 1.6 : dot;
+      ctx.fillStyle = it.kind === 'seal' ? '#ffd23a' : '#f4ecd8';
+      ctx.strokeStyle = '#3a2a10';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(tx * sx, tz * sy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
     // 鏡頭視野四邊形
     const rect = g.stage.renderer.domElement.getBoundingClientRect();
@@ -449,4 +505,35 @@ export class Hud {
     this.mini.addEventListener('pointerup', end);
     this.mini.addEventListener('pointercancel', end);
   }
+}
+
+/** 頂列的特殊勝利倒數文字（奇觀、玉璽） */
+function victoryTimer(sim: Game['sim']): string {
+  const ab = sim.abilities;
+  let best = Infinity;
+  let who = -1;
+  let kind = '';
+  for (const [b, t0] of ab.wonders) {
+    if (!sim.buildings.alive[b]) continue;
+    const left = 3000 - (sim.tick - t0);
+    if (left < best) {
+      best = left;
+      who = sim.buildings.owner[b];
+      kind = WONDER_NAMES[sim.players[sim.buildings.owner[b]].faction] ?? '奇觀';
+    }
+  }
+  if (sim.sealVictory) {
+    for (const it of ab.items) {
+      if (it.kind !== 'seal' || it.academy < 0 || !sim.buildings.alive[it.academy]) continue;
+      const left = 3000 - (sim.tick - it.since);
+      if (left < best) {
+        best = left;
+        who = sim.buildings.owner[it.academy];
+        kind = '稱帝';
+      }
+    }
+  }
+  if (who < 0) return '';
+  const sec = Math.max(0, Math.ceil(best / 10));
+  return `${who === 0 ? '我方' : '敵方'}${kind} ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }

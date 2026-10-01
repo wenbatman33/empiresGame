@@ -69,6 +69,8 @@ class Heap {
 
 export class Pathfinder {
   private readonly n: number;
+  /** 這個尋路器用的通行格網（陸地 map.pass、水面 map.wpass） */
+  private readonly pass: Uint8Array;
   private readonly g: Int32Array;
   private readonly f: Int32Array;
   private readonly hh: Int32Array;
@@ -80,7 +82,11 @@ export class Pathfinder {
   /** 統計：累計展開的節點數（DEV 面板顯示） */
   nodesExpanded = 0;
 
-  constructor(private readonly map: MapGrid) {
+  constructor(
+    private readonly map: MapGrid,
+    readonly water = false,
+  ) {
+    this.pass = water ? map.wpass : map.pass;
     this.n = map.w * map.h;
     this.g = new Int32Array(this.n);
     this.f = new Int32Array(this.n);
@@ -91,19 +97,27 @@ export class Pathfinder {
     this.heap = new Heap(this.f, this.hh);
   }
 
-  /** 走到該格的成本倍率（淺灘 1.5 倍） */
+  /** 該格可走嗎（依領域） */
+  ok(x: number, y: number): boolean {
+    return x >= 0 && y >= 0 && x < this.map.w && y < this.map.h && this.pass[y * this.map.w + x] !== PASS_BLOCKED;
+  }
+
+  okFx(x: number, y: number): boolean {
+    return this.ok(x >> FX_SHIFT, y >> FX_SHIFT);
+  }
+
+  /** 走到該格的成本倍率（陸地的淺灘 1.5 倍） */
   private stepCost(dirIdx: number, toIdx: number): number {
     const c = COST[dirIdx];
-    return this.map.pass[toIdx] === PASS_SHALLOW ? c + (c >> 1) : c;
+    return !this.water && this.pass[toIdx] === PASS_SHALLOW ? c + (c >> 1) : c;
   }
 
   /** 從 (x,y) 往 d 方向走一格是否合法（斜走不能切牆角） */
   canStep(x: number, y: number, d: number): boolean {
-    const m = this.map;
     const nx = x + DX[d];
     const ny = y + DY[d];
-    if (!m.walkable(nx, ny)) return false;
-    if (d >= 4 && (!m.walkable(x + DX[d], y) || !m.walkable(x, y + DY[d]))) return false;
+    if (!this.ok(nx, ny)) return false;
+    if (d >= 4 && (!this.ok(x + DX[d], y) || !this.ok(x, y + DY[d]))) return false;
     return true;
   }
 
@@ -118,13 +132,13 @@ export class Pathfinder {
     const m = this.map;
     tx = Math.max(0, Math.min(m.w - 1, tx));
     ty = Math.max(0, Math.min(m.h - 1, ty));
-    if (m.walkable(tx, ty)) return [tx, ty];
-    for (let r = 1; r < 32; r++) {
+    if (this.ok(tx, ty)) return [tx, ty];
+    for (let r = 1; r < 48; r++) {
       let best = -1;
       let bestD = INF;
       for (let y = ty - r; y <= ty + r; y++) {
         for (let x = tx - r; x <= tx + r; x++) {
-          if (Math.max(Math.abs(x - tx), Math.abs(y - ty)) !== r || !m.walkable(x, y)) continue;
+          if (Math.max(Math.abs(x - tx), Math.abs(y - ty)) !== r || !this.ok(x, y)) continue;
           const d = (x - tx) * (x - tx) + (y - ty) * (y - ty);
           if (d < bestD) {
             bestD = d;
@@ -147,7 +161,7 @@ export class Pathfinder {
     const stx = sx >> FX_SHIFT;
     const sty = sy >> FX_SHIFT;
     let [gtx, gty] = this.nearestWalkable(gx >> FX_SHIFT, gy >> FX_SHIFT);
-    const goalExact = m.walkableFx(gx, gy);
+    const goalExact = this.okFx(gx, gy);
     const start = m.idx(stx, sty);
     const goal = m.idx(gtx, gty);
     const gen = ++this.gen;
@@ -225,7 +239,6 @@ export class Pathfinder {
 
   /** 視線檢查：兩點間每 1/4 格取樣，經過的格都要可走，且不能斜切牆角 */
   los(ax: number, ay: number, bx: number, by: number): boolean {
-    const m = this.map;
     const dx = bx - ax;
     const dy = by - ay;
     const len = isqrt(dx * dx + dy * dy);
@@ -238,8 +251,8 @@ export class Pathfinder {
       const tx = x >> FX_SHIFT;
       const ty = y >> FX_SHIFT;
       if (tx === ptx && ty === pty) continue;
-      if (!m.inBounds(tx, ty) || m.pass[m.idx(tx, ty)] === PASS_BLOCKED) return false;
-      if (tx !== ptx && ty !== pty && (!m.walkable(tx, pty) || !m.walkable(ptx, ty))) return false;
+      if (!this.ok(tx, ty)) return false;
+      if (tx !== ptx && ty !== pty && (!this.ok(tx, pty) || !this.ok(ptx, ty))) return false;
       ptx = tx;
       pty = ty;
     }
@@ -272,7 +285,7 @@ export class Pathfinder {
         // 反向搜尋：鄰居 → cur，需要鄰居能合法走到 cur
         const nx = cx + DX[d];
         const ny = cy + DY[d];
-        if (!m.walkable(nx, ny)) continue;
+        if (!this.ok(nx, ny)) continue;
         const back = d < 4 ? (d + 2) % 4 : 4 + ((d - 4 + 2) % 4);
         if (!this.canStep(nx, ny, back)) continue;
         const ni = ny * W + nx;

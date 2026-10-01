@@ -1,6 +1,6 @@
 // 戰鬥系統（docs/03）：索敵、追擊、近戰、投射物、傷害公式、防禦建築、死亡
 import type { Command } from '../core/commands';
-import { BUILDING_DEFS, TAG, UNIT_DEFS } from '../core/defs';
+import { BUILDING_DEFS, TAG, UNIT_DEFS, UNIT_INDEX } from '../core/defs';
 import { FX_SHIFT, ONE, isqrt } from '../core/fixed';
 import { CAPACITY, ORDER, S, STANCE, TASK, TK } from '../core/world';
 import type { Sim } from '../sim';
@@ -52,7 +52,7 @@ export class CombatSystem {
     const w = this.sim.world;
     this.head.fill(-1);
     for (let id = 0; id < w.high; id++) {
-      if (!w.alive[id] || w.state[id] === S.Dead) continue;
+      if (!w.alive[id] || w.state[id] === S.Dead || w.aboard[id] >= 0) continue;
       const c = Math.floor((w.y[id] >> FX_SHIFT) / CELL) * this.cw + Math.floor((w.x[id] >> FX_SHIFT) / CELL);
       this.next[id] = this.head[c];
       this.head[c] = id;
@@ -65,9 +65,15 @@ export class CombatSystem {
     const sim = this.sim;
     const w = sim.world;
     const t = w.tgt[id];
-    if (w.tgtKind[id] === TK.Unit) return t >= 0 && t < w.high && w.alive[t] === 1 && w.state[t] !== S.Dead && w.owner[t] !== w.owner[id];
+    if (w.tgtKind[id] === TK.Unit) return t >= 0 && t < w.high && w.alive[t] === 1 && w.state[t] !== S.Dead && w.owner[t] !== w.owner[id] && this.canSee(id, t);
     if (w.tgtKind[id] === TK.Building) return t >= 0 && sim.buildings.alive[t] === 1 && sim.buildings.owner[t] !== w.owner[id];
     return false;
+  }
+
+  /** 隱形：諸葛亮（臥龍）看得到，其他人看不到 */
+  private canSee(id: number, t: number): boolean {
+    const w = this.sim.world;
+    return this.sim.abilities.targetable(t) || w.utype[id] === UNIT_INDEX.hero_zhuge;
   }
 
   setTarget(id: number, kind: number, t: number): void {
@@ -107,7 +113,7 @@ export class CombatSystem {
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
         for (let j = this.head[cy * this.cw + cx]; j !== -1; j = this.next[j]) {
-          if (w.owner[j] === me) continue;
+          if (w.owner[j] === me || !this.canSee(id, j)) continue;
           const dx = w.x[j] - x;
           const dy = w.y[j] - y;
           const d2 = dx * dx + dy * dy;
@@ -164,6 +170,13 @@ export class CombatSystem {
     const w = sim.world;
     const def = UNIT_DEFS[w.utype[id]];
     if (w.cooldown[id] > 0) w.cooldown[id]--;
+    if (w.aboard[id] >= 0) return;
+    // 恐懼中：只顧著逃
+    if (w.fearUntil[id] > sim.tick) return;
+    if (w.utype[id] === UNIT_INDEX.strategist) {
+      this.tickStrategist(id);
+      return;
+    }
     if (def.attack <= 0) return;
     if (w.order[id] === ORDER.Move && w.state[id] !== S.Move) w.order[id] = ORDER.None;
     if (w.tgtKind[id] !== TK.None && !this.targetValid(id)) {
@@ -222,6 +235,39 @@ export class CombatSystem {
     this.engage(id);
   }
 
+  /** 謀士：被下令勸降某個敵人時，走進射程後持續遊說 */
+  private tickStrategist(id: number): void {
+    const sim = this.sim;
+    const w = sim.world;
+    if (w.tgtKind[id] !== TK.Unit) return;
+    if (!this.targetValid(id) || UNIT_DEFS[w.utype[w.tgt[id]]].hero) {
+      this.clearTarget(id);
+      w.order[id] = ORDER.None;
+      return;
+    }
+    const t = w.tgt[id];
+    const dx = w.x[t] - w.x[id];
+    const dy = w.y[t] - w.y[id];
+    const gap = isqrt(dx * dx + dy * dy) - w.radius[id] - w.radius[t];
+    if (gap <= sim.players[w.owner[id]].uRange[w.utype[id]]) {
+      if (w.state[id] === S.Move) sim.stopMoving(id);
+      if (w.state[id] !== S.Attack) {
+        w.state[id] = S.Attack;
+        w.stateTick[id] = sim.tick;
+      }
+      w.fx[id] = dx;
+      w.fy[id] = dy;
+      sim.abilities.channelConvert(id, t);
+      return;
+    }
+    if (w.state[id] !== S.Move || w.repath[id] === 0) {
+      sim.moveUnit(id, w.x[t], w.y[t]);
+      w.repath[id] = 8;
+    } else {
+      w.repath[id]--;
+    }
+  }
+
   private engage(id: number): void {
     const sim = this.sim;
     const w = sim.world;
@@ -258,7 +304,7 @@ export class CombatSystem {
       if (def.minRangeFx && gap < def.minRangeFx) return;
       if (w.cooldown[id] === 0) {
         this.fire(id);
-        w.cooldown[id] = def.cooldownTicks;
+        w.cooldown[id] = Math.max(1, Math.trunc((def.cooldownTicks * sim.abilities.cooldownMul(id)) / 100));
       }
       return;
     }
@@ -301,7 +347,7 @@ export class CombatSystem {
   // ───────── 傷害 ─────────
 
   /** 傷害 ＝ max(1, 攻擊 − 對應護甲 ＋ Σ 標籤加成) × 高低差修正（docs/03 §3） */
-  damage(attack: number, ranged: boolean, bonus: [number, number][], fromX: number, fromY: number, kind: number, t: number): number {
+  damage(attack: number, ranged: boolean, bonus: [number, number][], fromX: number, fromY: number, kind: number, t: number, from = -1): number {
     const sim = this.sim;
     let armor: number;
     let tags: number;
@@ -318,16 +364,20 @@ export class CombatSystem {
     } else {
       const bs = sim.buildings;
       const d = BUILDING_DEFS[bs.btype[t]];
-      armor = d.armor[ranged ? 1 : 0];
+      armor = d.armor[ranged ? 1 : 0] + sim.abilities.buildingArmorBonus(bs.owner[t]);
       tags = TAG.building;
       tx = bs.centerX(t);
       ty = bs.centerY(t);
     }
     let dmg = attack - armor;
     for (const [tag, v] of bonus) if (tags & tag) dmg += v;
+    // 關羽武聖：對武將 ＋5
+    if (from >= 0 && tags & TAG.hero && sim.world.utype[from] === UNIT_INDEX.hero_guanyu) dmg += 5;
     dmg = Math.max(1, dmg);
     const dh = sim.heightAt(fromX, fromY) - sim.heightAt(tx, ty);
-    if (dh >= 24) dmg = Math.trunc((dmg * 125) / 100);
+    // 蜀：高地加成 ×1.4
+    const high = from >= 0 && sim.players[sim.world.owner[from]].faction === 'shu' ? 140 : 125;
+    if (dh >= 24) dmg = Math.trunc((dmg * high) / 100);
     else if (dh <= -24) dmg = Math.max(1, Math.trunc((dmg * 75) / 100));
     return dmg;
   }
@@ -339,9 +389,26 @@ export class CombatSystem {
     const kind = w.tgtKind[id];
     const t = w.tgt[id];
     const ranged = def.rangeFx > 0;
-    const atk = sim.players[w.owner[id]].uAtk[w.utype[id]];
-    const dmg = this.damage(atk, ranged, def.bonus, w.x[id], w.y[id], kind, t);
+    const pl = sim.players[w.owner[id]];
+    const ab = sim.abilities;
+    const atk = Math.max(1, Math.trunc((pl.uAtk[w.utype[id]] * ab.atkMul(id)) / 100));
+    let dmg = this.damage(atk, ranged, def.bonus, w.x[id], w.y[id], kind, t, id);
+    // 衝鋒首擊 ×2（虎豹騎）、八百破十萬首擊 ×3
+    if (def.charge && w.calm[id] >= 60) dmg *= 2;
+    if (w.tripleUntil[id] > sim.tick) {
+      dmg *= 3;
+      w.tripleUntil[id] = 0;
+    }
+    // 火矢：弓兵打建築加火焰傷害
+    if (pl.fireArrows && def.tags & TAG.archer && kind === TK.Building) dmg += Math.trunc((dmg * pl.fireArrows * ab.fireMul(w.owner[id])) / 10000);
+    w.calm[id] = 0;
+    // 攻擊後現形
+    w.stealthUntil[id] = 0;
     w.lastHit[id] = sim.tick;
+    if (def.explodeFx) {
+      this.explode(id, atk);
+      return;
+    }
     if (!ranged) {
       this.applyDamage(kind, t, dmg, id);
       return;
@@ -356,8 +423,25 @@ export class CombatSystem {
       return;
     }
     const moving = kind === TK.Unit && w.state[t] === S.Move;
-    const hit = !moving || sim.rng.int(100) < MOVING_HIT;
-    this.launch(w.owner[id], w.x[id], w.y[id], 40, tx, ty, kind, t, dmg, hit, id);
+    // 連射（連弩兵、樓船）：一次射好幾支，每支各自判定命中
+    const n = Math.max(1, pl.uVolley[w.utype[id]]);
+    for (let k = 0; k < n; k++) {
+      const hit = !moving || sim.rng.int(100) < MOVING_HIT;
+      this.launch(w.owner[id], w.x[id] + (k - (n >> 1)) * (ONE >> 3), w.y[id], 40, tx, ty, kind, t, dmg, hit, id);
+    }
+  }
+
+  /** 火船自爆：範圍傷害（敵我都傷）＋ 留下火海 */
+  private explode(id: number, atk: number): void {
+    const sim = this.sim;
+    const w = sim.world;
+    const def = UNIT_DEFS[w.utype[id]];
+    const me = w.owner[id];
+    const power = Math.trunc((atk * sim.abilities.fireMul(me)) / 100);
+    w.hp[id] = 0;
+    this.kill(id);
+    this.splashDamage(w.x[id], w.y[id], def.explodeFx, power, 0, -1);
+    sim.abilities.areas.push({ kind: 'fire', owner: me, x: w.x[id], y: w.y[id], r: def.explodeFx, until: sim.tick + 80, dps: 10 });
   }
 
   private launch(owner: number, sx: number, sy: number, h0: number, tx: number, ty: number, kind: number, t: number, dmg: number, hit: boolean, from: number, splash = 0, bldBonus = 0): void {
@@ -413,9 +497,11 @@ export class CombatSystem {
           const dy = w.y[j] - y;
           const d = isqrt(dx * dx + dy * dy);
           if (d > r) continue;
+          // 火船爆炸對船 ×2
+          const shipMul = from < 0 && UNIT_DEFS[w.utype[j]].tags & TAG.ship ? 2 : 1;
           const tp = sim.players[w.owner[j]];
           const base = Math.max(1, atk - tp.uArmP[w.utype[j]]);
-          hits.push([j, Math.max(1, base - Math.trunc((base * d) / (2 * r)))]);
+          hits.push([j, Math.max(1, base - Math.trunc((base * d) / (2 * r))) * shipMul]);
         }
       }
     }
@@ -430,7 +516,7 @@ export class CombatSystem {
       const dx = Math.max(x0 - x, 0, x - (x0 + (def.w << FX_SHIFT)));
       const dy = Math.max(y0 - y, 0, y - (y0 + (def.h << FX_SHIFT)));
       if (dx * dx + dy * dy > r * r) continue;
-      this.applyDamage(TK.Building, b, Math.max(1, atk + bldBonus - def.armor[1]), from);
+      this.applyDamage(TK.Building, b, Math.max(1, atk + bldBonus - def.armor[1] - sim.abilities.buildingArmorBonus(bs.owner[b])), from);
     }
   }
 
@@ -439,10 +525,22 @@ export class CombatSystem {
     if (kind === TK.Unit) {
       const w = sim.world;
       if (!w.alive[t] || w.state[t] === S.Dead) return;
+      const mul = sim.abilities.damageTakenMul(t);
+      if (mul <= 0) return;
+      if (mul !== 100) dmg = Math.max(1, Math.trunc((dmg * mul) / 100));
       w.hp[t] -= dmg;
-      if (from >= 0 && from < w.high && w.alive[from]) w.lastAttacker[t] = from;
+      const src = from >= 0 && from < w.high && w.alive[from] && w.state[from] !== S.Dead;
+      if (src) w.lastAttacker[t] = from;
+      // 夏侯惇剛烈：反彈 15% 近戰傷害
+      if (src && w.utype[t] === UNIT_INDEX.hero_xiahou && UNIT_DEFS[w.utype[from]].rangeFx === 0) {
+        const back = Math.trunc((dmg * 15) / 100);
+        if (back > 0) this.applyDamage(TK.Unit, from, back, -1);
+      }
       if (w.hp[t] <= 0) {
-        if (from >= 0 && from < w.high && w.alive[from]) sim.players[w.owner[from]].stats.kills++;
+        if (src) {
+          sim.players[w.owner[from]].stats.kills++;
+          sim.abilities.onKill(from, false);
+        }
         this.kill(t);
         return;
       }
@@ -462,7 +560,10 @@ export class CombatSystem {
       bs.lastAttacker[t] = from;
       if (bs.hp[t] <= 0) {
         const def = BUILDING_DEFS[bs.btype[t]];
-        if (from >= 0 && from < sim.world.high && sim.world.alive[from]) sim.players[sim.world.owner[from]].stats.razed++;
+        if (from >= 0 && from < sim.world.high && sim.world.alive[from]) {
+          sim.players[sim.world.owner[from]].stats.razed++;
+          sim.abilities.onKill(from, true);
+        }
         sim.players[bs.owner[t]].stats.buildingsLost++;
         sim.events.push({ t: 'bDestroyed', id: t, btype: bs.btype[t], tx: bs.tx[t], ty: bs.ty[t], w: def.w, h: def.h });
         sim.removeBuilding(t);
@@ -482,7 +583,8 @@ export class CombatSystem {
     w.tgt[id] = -1;
     w.order[id] = ORDER.None;
     this.deadAt[id] = sim.tick;
-    sim.players[w.owner[id]].stats.lost++;
+    sim.abilities.onDeath(id);
+    if (UNIT_DEFS[w.utype[id]].pop > 0) sim.players[w.owner[id]].stats.lost++;
     sim.events.push({ t: 'died', id, player: w.owner[id], utype: w.utype[id] });
   }
 
@@ -513,7 +615,7 @@ export class CombatSystem {
       for (let gy = c0y; gy <= c1y; gy++) {
         for (let gx = c0x; gx <= c1x; gx++) {
           for (let j = this.head[gy * this.cw + gx]; j !== -1; j = this.next[j]) {
-            if (w.owner[j] === me || w.state[j] === S.Dead) continue;
+            if (w.owner[j] === me || w.state[j] === S.Dead || !sim.abilities.targetable(j)) continue;
             const dx = w.x[j] - cx;
             const dy = w.y[j] - cy;
             const d = dx * dx + dy * dy;
@@ -527,9 +629,13 @@ export class CombatSystem {
       if (best < 0) continue;
       const dmg = this.damage(def.attack + pl.bAtk[bs.btype[b]], true, [], cx, cy, TK.Unit, best);
       const moving = w.state[best] === S.Move;
-      const hit = !moving || sim.rng.int(100) < MOVING_HIT;
-      this.launch(me, cx, cy, def.id === 'tower' ? 150 : 110, w.x[best], w.y[best], TK.Unit, best, dmg, hit, -1);
-      bs.cooldown[b] = def.cooldownTicks;
+      // 關隘一次射多支箭
+      for (let k = 0; k < Math.max(1, def.arrows); k++) {
+        const hit = !moving || sim.rng.int(100) < MOVING_HIT;
+        this.launch(me, cx + (k - (def.arrows >> 1)) * (ONE >> 2), cy, def.id === 'tower' ? 150 : 110, w.x[best], w.y[best], TK.Unit, best, dmg, hit, -1);
+      }
+      // 孫權坐斷東南：附近防禦建築射速 ＋25%
+      bs.cooldown[b] = sim.abilities.sunquanNear(me, cx, cy) ? Math.trunc((def.cooldownTicks * 80) / 100) : def.cooldownTicks;
     }
   }
 
@@ -546,7 +652,9 @@ export class CombatSystem {
             : c.kind === TK.Building && c.target >= 0 && sim.buildings.alive[c.target] && sim.buildings.owner[c.target] !== c.player;
         if (!valid) return;
         for (const id of sim.ownedIds(c.player, c.ids)) {
-          if (UNIT_DEFS[w.utype[id]].attack <= 0) continue;
+          // 謀士：對敵兵下「攻擊」＝勸降
+          const conv = w.utype[id] === UNIT_INDEX.strategist && c.kind === TK.Unit;
+          if (UNIT_DEFS[w.utype[id]].attack <= 0 && !conv) continue;
           if (c.kind === TK.Unit && UNIT_DEFS[w.utype[id]].buildingsOnly) continue;
           sim.economy.clearTask(id);
           w.order[id] = ORDER.Attack;

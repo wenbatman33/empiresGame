@@ -8,6 +8,8 @@ import { CAMERA, type Quality } from './config';
 import { Controls } from './input/controls';
 import { RtsCamera } from './input/camera';
 import { BuildingRenderer } from './render/buildings';
+import { Effects } from './render/effects';
+import { SKILLS, STRATAGEMS } from './sim/systems/abilities';
 import { FogRenderer } from './render/fog';
 import { ProjectileRenderer } from './render/projectiles';
 import { Markers } from './render/markers';
@@ -16,7 +18,7 @@ import { Stage } from './render/stage';
 import { Terrain } from './render/terrain';
 import { Trees } from './render/trees';
 import { UnitRenderer } from './render/units';
-import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, RK, TECH_DEFS, UNIT_DEFS, UNIT_INDEX } from './sim/core/defs';
+import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, RK, TECH_DEFS, UNIT_DEFS, UNIT_INDEX, WONDER_NAMES } from './sim/core/defs';
 import type { Command } from './sim/core/commands';
 import { ONE, TICK_MS } from './sim/core/fixed';
 import { S, TK } from './sim/core/world';
@@ -50,6 +52,7 @@ export class Game {
   readonly markers: Markers;
   readonly fog: FogRenderer;
   readonly projectilesR: ProjectileRenderer;
+  readonly effects: Effects;
   readonly cam: RtsCamera;
   readonly hud: Hud;
   readonly controls: Controls;
@@ -62,6 +65,8 @@ export class Game {
   rallyMode = false;
   /** 攻擊移動模式：下一次點地面是攻擊移動 */
   attackMoveMode = false;
+  /** 等待點選目標地點的技能／計策（武將 id 或計策名稱） */
+  targeting: { kind: 'skill'; id: number } | { kind: 'stratagem'; name: string } | { kind: 'unload'; ship: number } | null = null;
   /** 巡邏模式：下一次點地面是巡邏終點 */
   patrolMode = false;
   /** 陣型：散開 */
@@ -100,7 +105,17 @@ export class Game {
     this.layoutMode = opts.layout ?? detectLayout();
     this.setup = opts.setup;
     const st = opts.setup;
-    this.sim = new Sim({ seed: st.seed, mapSize: st.map, bonusRes: st.res, popLimit: st.pop, handicap: [1000, AI_PARAMS[st.ai].handicap] });
+    const fac = (f?: string) => (f && f !== 'random' ? f : '');
+    this.sim = new Sim({
+      seed: st.seed,
+      mapSize: st.map,
+      mapType: st.mapType ?? 'central',
+      factions: [fac(st.faction), fac(st.aiFaction)],
+      seal: st.seal !== false,
+      bonusRes: st.res,
+      popLimit: st.pop,
+      handicap: [1000, AI_PARAMS[st.ai].handicap],
+    });
     this.speed = st.speed;
     this.stage = new Stage(container, opts.quality);
     this.terrain = new Terrain(this.sim.map);
@@ -111,7 +126,8 @@ export class Game {
     this.markers = new Markers();
     this.fog = new FogRenderer(this.sim.map.w, this.sim.map.h);
     this.projectilesR = new ProjectileRenderer(this.terrain);
-    this.stage.scene.add(this.terrain.group, this.trees.group, this.resourcesR.group, this.buildingsR.group, this.units.group, this.markers.group, this.projectilesR.mesh);
+    this.effects = new Effects(this.terrain);
+    this.stage.scene.add(this.terrain.group, this.trees.group, this.resourcesR.group, this.buildingsR.group, this.units.group, this.markers.group, this.projectilesR.mesh, this.effects.group);
     this.applyShadowMode();
     const startDist = this.layoutMode === 'mobile' ? CAMERA.startDistMobile : CAMERA.startDistPc;
     this.cam = new RtsCamera(this.stage.camera, this.terrain, this.sim.map.w, this.sim.map.h, startDist);
@@ -216,6 +232,7 @@ export class Game {
     });
     this.buildingsR.update(this.sim, this.selBuilding, this.myPlayer, exp);
     this.projectilesR.update(this.sim, alpha, vis);
+    this.effects.update(this.sim, this.units, this.time, this.myPlayer, vis, exp);
     this.battleSounds();
     this.resourcesR.update(dt);
     if (this.placing) {
@@ -270,7 +287,8 @@ export class Game {
           this.hud.toast(`⚠ 敵軍進入「${t.name}」`, 2500);
         }
       }
-      if (e.t === 'gameOver' && !this.over) this.gameOver(e.winner === this.myPlayer);
+      if (e.t === 'gameOver' && !this.over) this.gameOver(e.winner === this.myPlayer, e.reason);
+      if (!this.replaying) this.featureEvent(e);
       if (e.t === 'bDestroyed') {
         if (this.selBuilding === e.id) this.selBuilding = -1;
         this.resourcesR.dirty();
@@ -290,6 +308,60 @@ export class Game {
     const housed = this.sim.players[this.myPlayer].housed;
     if (housed && !this.wasHoused) this.hud.toast('人口已滿：請蓋民居', 2500);
     this.wasHoused = housed;
+  }
+
+  /** 三國特色事件：武將技演出、計策、倒戈、兵書玉璽、奇觀 */
+  private featureEvent(e: (typeof this.sim.events)[number]): void {
+    const sim = this.sim;
+    const me = this.myPlayer;
+    switch (e.t) {
+      case 'skill': {
+        const sk = SKILLS[e.skill];
+        const w = sim.world;
+        const x = (sk?.target === 'point' ? e.x : w.x[e.id]) / ONE;
+        const z = (sk?.target === 'point' ? e.y : w.y[e.id]) / ONE;
+        const seen = e.player === me || this.isVisible(Math.floor(x), Math.floor(z));
+        if (!seen) return;
+        this.effects.burst(x, z, sk?.target === 'point' ? 5 : 7, e.player === me ? 0xf0c040 : 0xff5a4a, this.time, 1.2);
+        this.hud.cutIn(UNIT_DEFS[w.utype[e.id]].name, sk?.name ?? '', e.player === me);
+        sfx.play('skill', 0.5);
+        break;
+      }
+      case 'stratagem': {
+        const st = STRATAGEMS[e.kind];
+        if (st?.target === 'point') this.effects.burst(e.x / ONE, e.y / ONE, 4, 0xff8a2a, this.time, 1.5);
+        this.hud.toast(e.player === me ? `施放計策：${st?.name}` : `⚠ 敵方施放計策「${st?.name}」！`, 2500);
+        sfx.play('skill', 0.5);
+        break;
+      }
+      case 'converted':
+        if (this.units.seen[e.id]) this.effects.burst(this.units.wx[e.id], this.units.wz[e.id], 1.2, 0xb08aff, this.time);
+        if (e.to === me) this.hud.toast('謀士勸降成功！');
+        else if (e.from === me) this.hud.toast('⚠ 我軍被敵方謀士勸降了');
+        break;
+      case 'levelUp':
+        if (sim.world.owner[e.id] === me) this.hud.toast(`${UNIT_DEFS[sim.world.utype[e.id]].name} 威名提升，升到 ${e.level} 級！`);
+        break;
+      case 'itemPicked': {
+        const it = sim.abilities.items[e.item];
+        const name = it.kind === 'seal' ? '傳國玉璽' : '兵書';
+        this.hud.toast(e.player === me ? `謀士拿到${name}了，送回書院！` : `⚠ 敵方謀士拿走了${name}`, 2500);
+        break;
+      }
+      case 'itemStored': {
+        const it = sim.abilities.items[e.item];
+        if (it.kind === 'seal') this.hud.toast(e.player === me ? '玉璽入庫！守住書院 5 分鐘即可稱帝' : '⚠ 敵方得到傳國玉璽！5 分鐘內必須摧毀其書院', 4000);
+        else if (e.player === me) this.hud.toast('兵書入庫：持續產出金');
+        sfx.play(e.player === me ? 'done' : 'alert', 1);
+        break;
+      }
+      case 'wonder': {
+        const name = WONDER_NAMES[sim.players[e.player].faction] ?? '奇觀';
+        this.hud.toast(e.player === me ? `${name}落成！守住 5 分鐘即可勝利` : `⚠ 敵方建成${name}！5 分鐘內必須摧毀`, 4000);
+        sfx.play(e.player === me ? 'age' : 'alert', 1);
+        break;
+      }
+    }
   }
 
   /** 我方遭到攻擊：提示 ＋ 小地圖閃紅點（10 秒內只提示一次） */
@@ -411,8 +483,13 @@ export class Game {
     this.goHome();
   }
 
-  private gameOver(win: boolean): void {
-    this.over = true;
+  /** DEV：預覽結算畫面（不結束遊戲） */
+  previewGameOver(win: boolean, reason: string): void {
+    this.gameOver(win, reason, true);
+  }
+
+  private gameOver(win: boolean, reason = 'conquest', preview = false): void {
+    if (!preview) this.over = true;
     sfx.play(win ? 'win' : 'lose');
     const me = this.sim.players[this.myPlayer];
     const en = this.sim.players[1];
@@ -436,7 +513,7 @@ export class Game {
         location.href = `${location.pathname}${this.devQuery('?')}`;
       },
       watch: () => {},
-    });
+    }, reason);
   }
 
   // ───────── 點選 ─────────
@@ -545,6 +622,7 @@ export class Game {
     this.rallyMode = false;
     this.attackMoveMode = false;
     this.patrolMode = false;
+    this.targeting = null;
     this.hud.card.reset();
   }
 
@@ -583,6 +661,10 @@ export class Game {
 
   /** 觸控點一下：放置中 → 移動預覽；設集結點 → 設定；點到兵 → 選；有選我軍 → 下指令；否則選建築／資源 */
   tapAt(sx: number, sy: number): void {
+    if (this.targeting) {
+      this.commandAt(sx, sy, false);
+      return;
+    }
     if (this.placing) {
       this.updatePlacing(sx, sy);
       return;
@@ -750,11 +832,24 @@ export class Game {
       this.setRallyAt(sx, sy);
       return;
     }
+    const sim = this.sim;
+    if (this.targeting) {
+      const tg = this.targeting;
+      this.targeting = null;
+      const p = this.cam.groundAt(sx, sy);
+      if (!p) return;
+      const x = Math.round(p.x * ONE);
+      const y = Math.round(p.z * ONE);
+      if (tg.kind === 'skill') sim.issue({ t: 'skill', player: this.myPlayer, id: tg.id, x, y });
+      else if (tg.kind === 'stratagem') sim.issue({ t: 'stratagem', player: this.myPlayer, kind: tg.name, x, y });
+      else sim.issue({ t: 'unload', player: this.myPlayer, ship: tg.ship, x, y });
+      this.markers.ping(p.x, p.y, p.z, 0xf0c040);
+      return;
+    }
     const ids = this.ownSelected();
     if (!ids.length) return;
     const p = this.cam.groundAt(sx, sy);
     if (!p) return;
-    const sim = this.sim;
     if (this.attackMoveMode) {
       this.attackMoveMode = false;
       sim.issue({ t: 'attackMove', player: this.myPlayer, ids, x: Math.round(p.x * ONE), y: Math.round(p.z * ONE), spread: this.spread });
@@ -769,6 +864,17 @@ export class Game {
     }
     // 敵方單位 → 攻擊
     const u = this.pickUnit(sx, sy, 22);
+    if (u >= 0 && sim.world.owner[u] === this.myPlayer && UNIT_DEFS[sim.world.utype[u]].capacity && !ids.includes(u)) {
+      sim.issue({ t: 'board', player: this.myPlayer, ids, ship: u });
+      this.markers.ping(this.units.wx[u], this.units.wy[u], this.units.wz[u], 0x5ab4ff);
+      return;
+    }
+    const item = this.pickItem(p.x, p.z);
+    if (item >= 0 && ids.some((id) => sim.world.utype[id] === UNIT_INDEX.strategist)) {
+      sim.issue({ t: 'pickup', player: this.myPlayer, ids, item });
+      this.markers.ping(p.x, p.y, p.z, 0xf0c040);
+      return;
+    }
     if (u >= 0 && sim.world.owner[u] !== this.myPlayer) {
       sim.issue({ t: 'attack', player: this.myPlayer, ids, kind: TK.Unit, target: u });
       this.markers.ping(this.units.wx[u], this.units.wy[u], this.units.wz[u], 0xff5a4a);
@@ -794,6 +900,136 @@ export class Game {
       return;
     }
     this.issueMove(p.x, p.z);
+  }
+
+  /** 地上的兵書／玉璽（點選半徑 1.2 格） */
+  pickItem(x: number, z: number): number {
+    const items = this.sim.abilities.items;
+    let best = -1;
+    let bestD = 1.44;
+    items.forEach((it, k) => {
+      if (it.carrier >= 0 || it.academy >= 0) return;
+      const dx = it.x / ONE - x;
+      const dz = it.y / ONE - z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    });
+    return best;
+  }
+
+  /** 武將技：自身範圍的直接放，指定地點的進入選點模式 */
+  castSkill(id: number): void {
+    const sk = SKILLS[UNIT_DEFS[this.sim.world.utype[id]].id];
+    if (!sk) return;
+    if (sk.target === 'self') {
+      this.sim.issue({ t: 'skill', player: this.myPlayer, id, x: this.sim.world.x[id], y: this.sim.world.y[id] });
+      return;
+    }
+    this.targeting = { kind: 'skill', id };
+    this.hud.toast(`${sk.name}：點選目標地點`);
+  }
+
+  castStratagem(name: string): void {
+    const st = STRATAGEMS[name];
+    if (!st) return;
+    if (st.target === 'none') {
+      this.sim.issue({ t: 'stratagem', player: this.myPlayer, kind: name, x: 0, y: 0 });
+      return;
+    }
+    this.targeting = { kind: 'stratagem', name };
+    this.hud.toast(`${st.name}：點選地點`);
+  }
+
+  unloadShip(ship: number): void {
+    this.targeting = { kind: 'unload', ship };
+    this.hud.toast('卸兵：點選要靠岸的地點');
+  }
+
+  /** 民夫分配助手：各資源的民夫人數 [糧, 木, 金, 石, 建造, 閒置] */
+  villagerCounts(): number[] {
+    const sim = this.sim;
+    const w = sim.world;
+    const out = [0, 0, 0, 0, 0, 0];
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] !== this.myPlayer || w.state[id] === S.Dead || !UNIT_DEFS[w.utype[id]].worker) continue;
+      const k = this.villagerJob(id);
+      out[k]++;
+    }
+    return out;
+  }
+
+  private villagerJob(id: number): number {
+    const sim = this.sim;
+    const w = sim.world;
+    switch (w.task[id]) {
+      case 1:
+        return sim.res.alive[w.target[id]] ? RESOURCE_KINDS[sim.res.kind[w.target[id]]].res : 5;
+      case 2:
+        return 0;
+      case 3:
+        return w.carryRes[id];
+      case 4:
+        return 4;
+      default:
+        return 5;
+    }
+  }
+
+  /** 派一名民夫去採某種資源：先找閒置的，否則從人最多的資源抽一個 */
+  assignVillager(res: number): void {
+    const sim = this.sim;
+    const w = sim.world;
+    const counts = this.villagerCounts();
+    let from = 5;
+    if (!counts[5]) {
+      let most = -1;
+      for (let k = 0; k < 4; k++) if (k !== res && counts[k] > most) {
+        most = counts[k];
+        from = k;
+      }
+      if (most <= 0) return this.hud.toast('沒有可以調動的民夫');
+    }
+    let vid = -1;
+    for (let id = 0; id < w.high && vid < 0; id++) {
+      if (w.alive[id] && w.owner[id] === this.myPlayer && w.state[id] !== S.Dead && UNIT_DEFS[w.utype[id]].worker && this.villagerJob(id) === from) vid = id;
+    }
+    if (vid < 0) return;
+    const bs = sim.buildings;
+    // 糧：先找空的農田
+    if (res === 0) {
+      let best = -1;
+      let bd = Infinity;
+      for (let b = 0; b < bs.high; b++) {
+        if (!bs.alive[b] || !bs.complete[b] || bs.owner[b] !== this.myPlayer || BUILDING_DEFS[bs.btype[b]].id !== 'farm' || bs.farmer[b] >= 0) continue;
+        const d = (bs.centerX(b) - w.x[vid]) ** 2 + (bs.centerY(b) - w.y[vid]) ** 2;
+        if (d < bd) {
+          bd = d;
+          best = b;
+        }
+      }
+      if (best >= 0) {
+        sim.issue({ t: 'work', player: this.myPlayer, ids: [vid], building: best });
+        this.hud.toast(`派 1 名民夫去耕田（糧 ${counts[0] + 1}）`);
+        return;
+      }
+    }
+    const kinds = res === 0 ? [RK.berry, RK.deer, RK.boar] : res === 1 ? [RK.tree] : res === 2 ? [RK.gold] : [RK.stone];
+    const drop = sim.nearestDrop(this.myPlayer, res, w.x[vid], w.y[vid]);
+    const cx = drop >= 0 ? bs.centerX(drop) : w.x[vid];
+    const cy = drop >= 0 ? bs.centerY(drop) : w.y[vid];
+    let r = sim.findResource(kinds, cx, cy, 14, w.x[vid], w.y[vid]);
+    if (r < 0) r = sim.findResource(kinds, cx, cy, 40, w.x[vid], w.y[vid]);
+    if (r < 0) return this.hud.toast(`附近找不到${RES_NAMES[res]}${res === 0 ? '（請蓋農田）' : ''}`);
+    sim.issue({ t: 'gather', player: this.myPlayer, ids: [vid], res: r });
+    this.hud.toast(`派 1 名民夫去採${RES_NAMES[res]}（${counts[res] + 1} 人）`);
+  }
+
+  trade(res: number, buy: boolean): void {
+    this.sim.issue({ t: 'trade', player: this.myPlayer, res, buy });
+    sfx.play('click');
   }
 
   issueMove(x: number, z: number): void {
@@ -868,7 +1104,7 @@ export class Game {
     this.updatePlacing(r.left + r.width / 2, r.top + r.height / 2);
     // 畫面中央不能蓋時，往外找最近的空地（手機上少點一次）
     const pl = this.placing;
-    if (!pl.valid && this.sim.players[this.myPlayer].canAfford(BUILDING_DEFS[btype].cost)) {
+    if (!pl.valid && this.sim.players[this.myPlayer].canAfford(this.sim.players[this.myPlayer].buildingCost(btype))) {
       for (let rr = 1; rr <= 8 && !pl.valid; rr++) {
         for (let dy = -rr; dy <= rr && !pl.valid; dy++) {
           for (let dx = -rr; dx <= rr && !pl.valid; dx++) {
@@ -891,7 +1127,7 @@ export class Game {
     const def = BUILDING_DEFS[pl.btype];
     pl.tx = Math.round(p.x - def.w / 2);
     pl.ty = Math.round(p.z - def.h / 2);
-    pl.valid = (this.sim.canPlace(pl.btype, pl.tx, pl.ty) || !!pl.lineStart) && this.sim.players[this.myPlayer].canAfford(def.cost);
+    pl.valid = (this.sim.canPlace(pl.btype, pl.tx, pl.ty) || !!pl.lineStart) && this.sim.players[this.myPlayer].canAfford(this.sim.players[this.myPlayer].buildingCost(pl.btype));
   }
 
   /** 牆的格子（4 連通直線，跟模擬層一致） */
@@ -925,7 +1161,7 @@ export class Game {
       return;
     }
     if (!pl.valid) {
-      this.hud.toast(this.sim.players[this.myPlayer].canAfford(BUILDING_DEFS[pl.btype].cost) ? '這裡不能蓋' : '資源不足');
+      this.hud.toast(this.sim.players[this.myPlayer].canAfford(this.sim.players[this.myPlayer].buildingCost(pl.btype)) ? '這裡不能蓋' : '資源不足');
       return;
     }
     const ids = this.ownSelected().filter((id) => UNIT_DEFS[this.sim.world.utype[id]].worker);
@@ -933,7 +1169,8 @@ export class Game {
     sfx.play('build');
     const def = BUILDING_DEFS[pl.btype];
     this.markers.ping(pl.tx + def.w / 2, this.terrain.heightAt(pl.tx + def.w / 2, pl.ty + def.h / 2), pl.ty + def.h / 2, 0xffe14a);
-    if (keep && this.sim.players[this.myPlayer].canAfford([def.cost[0] * 2, def.cost[1] * 2, def.cost[2] * 2, def.cost[3] * 2])) {
+    const bc = this.sim.players[this.myPlayer].buildingCost(pl.btype);
+    if (keep && this.sim.players[this.myPlayer].canAfford([bc[0] * 2, bc[1] * 2, bc[2] * 2, bc[3] * 2])) {
       // Shift 連續放：下一個預覽先標成無效，滑鼠一動就重算
       pl.valid = false;
     } else {

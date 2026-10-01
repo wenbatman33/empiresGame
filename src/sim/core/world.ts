@@ -80,6 +80,42 @@ export class World {
   readonly lastAttacker = new Int32Array(CAPACITY).fill(-1);
   readonly repath = new Uint16Array(CAPACITY);
 
+  // ── M4：武將技、狀態效果、謀士、運兵 ──
+  /** 主動技能可再用的 tick */
+  readonly skillReady = new Int32Array(CAPACITY);
+  /** 攻擊加成（%）與到期 tick */
+  readonly atkPct = new Int16Array(CAPACITY);
+  readonly atkUntil = new Int32Array(CAPACITY);
+  /** 移速加成（%，負數＝緩速）與到期 */
+  readonly spdPct = new Int16Array(CAPACITY);
+  readonly spdUntil = new Int32Array(CAPACITY);
+  /** 受到傷害減免（%）與到期 */
+  readonly defPct = new Int16Array(CAPACITY);
+  readonly defUntil = new Int32Array(CAPACITY);
+  /** 恐懼：到期 tick（期間四散逃跑、不能攻擊） */
+  readonly fearUntil = new Int32Array(CAPACITY);
+  readonly invulnUntil = new Int32Array(CAPACITY);
+  /** 隱形：敵人無法鎖定 */
+  readonly stealthUntil = new Int32Array(CAPACITY);
+  /** 下一擊 ×3（張遼八百破十萬） */
+  readonly tripleUntil = new Int32Array(CAPACITY);
+  /** 衝鋒預備（虎豹騎：休息一陣子後第一擊 ×2） */
+  readonly calm = new Uint16Array(CAPACITY);
+  /** 武將威名（擊殺數）與等級 1–3 */
+  readonly renown = new Uint16Array(CAPACITY);
+  readonly level = new Uint8Array(CAPACITY);
+  /** 謀士勸降：累積 tick 與需要的 tick */
+  readonly convertAcc = new Int32Array(CAPACITY);
+  readonly convertNeed = new Int32Array(CAPACITY);
+  /** 搬運中的物品（兵書、玉璽，-1 ＝ 沒有） */
+  readonly item = new Int32Array(CAPACITY).fill(-1);
+  /** 坐在哪艘運兵船上（-1 ＝ 沒有）；在船上的兵不畫、不打、不碰撞 */
+  readonly aboard = new Int32Array(CAPACITY).fill(-1);
+  /** 離間計：原本的主人與歸還 tick；疑兵：消失 tick */
+  readonly origOwner = new Int16Array(CAPACITY).fill(-1);
+  readonly revertAt = new Int32Array(CAPACITY);
+  readonly expireAt = new Int32Array(CAPACITY);
+
   /** 曾經用過的最大 id ＋ 1；遍歷時只需掃到這裡 */
   high = 0;
   count = 0;
@@ -128,6 +164,18 @@ export class World {
     this.lastHit[id] = -1000;
     this.lastAttacker[id] = -1;
     this.repath[id] = 0;
+    this.skillReady[id] = tick + 100;
+    this.atkUntil[id] = this.spdUntil[id] = this.defUntil[id] = this.fearUntil[id] = 0;
+    this.invulnUntil[id] = this.stealthUntil[id] = this.tripleUntil[id] = 0;
+    this.calm[id] = 50;
+    this.renown[id] = 0;
+    this.level[id] = 1;
+    this.convertAcc[id] = this.convertNeed[id] = 0;
+    this.item[id] = -1;
+    this.aboard[id] = -1;
+    this.origOwner[id] = -1;
+    this.revertAt[id] = 0;
+    this.expireAt[id] = 0;
     this.count++;
     return id;
   }

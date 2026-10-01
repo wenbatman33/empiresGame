@@ -6,7 +6,7 @@ import { BUILDING_HEIGHT, buildingModel, farmCrops } from '../models/buildings';
 import { makeTeamMaterial } from '../models/geo';
 import { BUILDING_DEFS } from '../sim/core/defs';
 import type { Sim } from '../sim/sim';
-import type { Terrain } from './terrain';
+import { WATER_Y, type Terrain } from './terrain';
 import { withFog } from './fog';
 
 const CAP = 256;
@@ -113,7 +113,8 @@ export class BuildingRenderer {
       if (bs.owner[b] !== myPlayer && !explored(bs.tx[b] + (def.w >> 1), bs.ty[b] + (def.h >> 1))) continue;
       const cx = bs.tx[b] + def.w / 2;
       const cz = bs.ty[b] + def.h / 2;
-      const y = this.groundY(bs.tx[b], bs.ty[b], def.w, def.h);
+      // 船塢浮在水面上
+      const y = def.water ? Math.max(this.groundY(bs.tx[b], bs.ty[b], def.w, def.h), WATER_Y + 0.04) : this.groundY(bs.tx[b], bs.ty[b], def.w, def.h);
       const need = def.buildTicks * 3;
       const p = bs.complete[b] ? 1 : bs.progress[b] / need;
       const tm = this.typeMesh(bt, sim.players[bs.owner[b]]?.age ?? 1);
@@ -173,7 +174,7 @@ export class BuildingRenderer {
       this.ghostType = btype;
     }
     const def = BUILDING_DEFS[btype];
-    const y = this.groundY(tx, ty, def.w, def.h);
+    const y = def.water ? Math.max(this.groundY(tx, ty, def.w, def.h), WATER_Y + 0.04) : this.groundY(tx, ty, def.w, def.h);
     this.ghost!.visible = true;
     this.ghost!.position.set(tx + def.w / 2, y, ty + def.h / 2);
     const color = valid ? 0x7dff8a : 0xff5a4a;

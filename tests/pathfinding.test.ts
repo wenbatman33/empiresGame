@@ -58,3 +58,22 @@ describe('尋路', () => {
     expect(arrived / 300).toBeGreaterThanOrEqual(0.95);
   });
 });
+
+describe('流場快取', () => {
+  it('同一群兵連續兩次下令到同一點（共用同一張流場）不會出錯', () => {
+    const map = new MapGrid(64, 64);
+    map.starts = [{ x: 5, y: 5 }, { x: 58, y: 58 }];
+    for (let y = 10; y < 54; y++) map.setTile(32, y, T.Forest);
+    const sim = new Sim({ seed: 3, map });
+    sim.issue({ t: 'spawn', player: 0, unit: 1, x: 10 * ONE, y: 32 * ONE, count: 12 });
+    sim.step();
+    const ids = Array.from({ length: 12 }, (_, i) => i);
+    for (let k = 0; k < 3; k++) {
+      sim.issue({ t: 'move', player: 0, ids, x: 55 * ONE, y: 32 * ONE });
+      sim.step();
+      sim.step();
+    }
+    for (let t = 0; t < 1200; t++) sim.step();
+    expect(ids.filter((id) => sim.world.x[id] >> FX_SHIFT > 45).length).toBeGreaterThan(9);
+  });
+});

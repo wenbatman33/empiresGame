@@ -1,13 +1,14 @@
 // 電腦玩家（docs/05 §6、§7）：經濟機器人 ＋ 升時代 ＋ 建築 ＋ 研究 ＋ 軍事
 // 規則：只讀模擬狀態（敵軍只看自己視野內的）、只下指令；確定性（多人連線時每台機器跑同一套 AI）
-import { BUILDING_DEFS, BUILDING_INDEX, TAG, TECH_DEFS, TECH_INDEX, UNIT_DEFS, UNIT_INDEX, type Cost } from '../sim/core/defs';
+import { BUILDING_DEFS, BUILDING_INDEX, RK, TAG, TECH_DEFS, TECH_INDEX, UNIT_DEFS, UNIT_INDEX, type Cost } from '../sim/core/defs';
+import { SKILLS } from '../sim/systems/abilities';
 import { FX_SHIFT, ONE } from '../sim/core/fixed';
 import { ORDER, S } from '../sim/core/world';
 import { Rng } from '../sim/core/rng';
 import type { Sim } from '../sim/sim';
 import { DEFAULT_PLAN, EconomyBot } from './economyBot';
 
-export type Difficulty = 'easy' | 'normal' | 'hard';
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'insane';
 
 interface Params {
   /** 採集倍率（由開局設定套到玩家身上，AI 自己不能改） */
@@ -21,19 +22,26 @@ interface Params {
   villagers: [number, number, number, number];
   /** 幾 tick 想一次（反應速度） */
   thinkEvery: number;
+  /** 作弊：全圖視野（只有瘋狂） */
+  cheat?: boolean;
 }
 
 export const AI_PARAMS: Record<Difficulty, Params> = {
   easy: { handicap: 800, firstAttack: 840, maxWaves: 2, armyMin: [10, 14, 18], villagers: [14, 24, 34, 42], thinkEvery: 30 },
   normal: { handicap: 1000, firstAttack: 480, maxWaves: 99, armyMin: [10, 16, 22], villagers: [15, 32, 46, 56], thinkEvery: 15 },
   hard: { handicap: 1000, firstAttack: 540, maxWaves: 99, armyMin: [14, 22, 30], villagers: [16, 34, 50, 62], thinkEvery: 5 },
+  insane: { handicap: 1300, firstAttack: 480, maxWaves: 99, armyMin: [14, 22, 30], villagers: [16, 34, 50, 62], thinkEvery: 3, cheat: true },
 };
+
+/** 勢力特殊兵種 */
+const UNIQUE: Record<string, string> = { wei: 'tiger_cav', shu: 'repeater', wu: 'danyang' };
 
 /** 研究優先順序（能研究、付得起就研究） */
 const RESEARCH_ORDER = [
   'loom', 'wheelbarrow', 'axe', 'plow', 'forge', 'fletch', 'inf1', 'cav1', 'arc1', 'pick',
   'up_halberd', 'up_crossbow', 'up_swift', 'handcart', 'saw', 'seeder', 'steel', 'ironhead', 'inf2', 'cav2', 'arc2', 'shaft', 'up_elite_sword',
   'up_iron', 'hundred', 'piercing', 'inf3', 'cav3', 'arc3', 'twoman', 'waterwheel', 'up_elite_ha',
+  'tuntian', 'jiangdong', 'shipwright', 'masonry', 'medicine', 'tiger_elite', 'five_tigers', 'repeater_up', 'fire_arrows', 'crossbow_mech', 'mohist',
 ];
 
 /** 各時代採集比例（千分比）：糧、木、金、石 */
@@ -94,6 +102,138 @@ export class AIPlayer {
     this.train();
     this.research();
     this.command(th);
+    this.navy(th);
+    this.heroes();
+    this.stratagems();
+  }
+
+  /** 水圖：蓋船塢、漁船捕魚 */
+  private navy(th: number): void {
+    const sim = this.sim;
+    const w = sim.world;
+    if (th < 0 || (sim.map.type !== 'yangtze' && sim.map.type !== 'chibi')) return;
+    const bs = sim.buildings;
+    const docks = this.eco.countOwn('dock');
+    if (docks.done + docks.building === 0 && this.eco.villagers().length >= 9 && this.canSpend(this.pl.buildingCost(BUILDING_INDEX.dock))) {
+      if (this.dockSpot === null) this.dockSpot = this.findDockSpot(th);
+      // 位置被占了就下次重找
+      if (this.dockSpot && !sim.canPlace(BUILDING_INDEX.dock, this.dockSpot[0], this.dockSpot[1])) this.dockSpot = null;
+      else if (this.dockSpot) this.eco.build('dock', this.dockSpot, this.eco.pickWorker(bs.centerX(th), bs.centerY(th)));
+    }
+    let boats = 0;
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] !== this.player || w.state[id] === S.Dead || !UNIT_DEFS[w.utype[id]].fisher) continue;
+      boats++;
+      if (w.task[id] !== 0 || w.state[id] !== S.Idle) continue;
+      const r = sim.findResource([RK.fish], w.x[id], w.y[id], 40, w.x[id], w.y[id]);
+      if (r >= 0) sim.issue({ t: 'gather', player: this.player, ids: [id], res: r });
+    }
+    // 漁船：最多 6 艘
+    for (let b = 0; b < bs.high && boats < 6; b++) {
+      if (!bs.alive[b] || bs.owner[b] !== this.player || !bs.complete[b] || bs.btype[b] !== BUILDING_INDEX.dock || bs.queue[b].length) continue;
+      if (this.canSpend(this.pl.unitCost(UNIT_INDEX.fishing_boat))) sim.issue({ t: 'train', player: this.player, building: b, unit: UNIT_INDEX.fishing_boat, count: 1 });
+      boats++;
+    }
+  }
+
+  private dockSpot: [number, number] | null | undefined = null;
+
+  /** 由近到遠找可以蓋船塢的岸邊 */
+  private findDockSpot(th: number): [number, number] | undefined {
+    const sim = this.sim;
+    const bs = sim.buildings;
+    const cx = bs.tx[th] + 2;
+    const cy = bs.ty[th] + 2;
+    // 依出生點在地圖哪一側鏡像掃描順序，雙方擺法對稱（船塢佔 3×3，鏡像要扣掉寬度）
+    const st = sim.map.starts[this.player] ?? { x: 0, y: 0 };
+    const m = st.x * 2 < sim.map.w ? 1 : -1;
+    for (let r = 4; r < 36; r++) {
+      for (let j = -r; j <= r; j++) {
+        for (let i = -r; i <= r; i++) {
+          if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
+          const tx = m > 0 ? cx + i : cx - i - 2;
+          const ty = m > 0 ? cy + j : cy - j - 2;
+          if (sim.canPlace(BUILDING_INDEX.dock, tx, ty)) return [tx, ty];
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** 武將技：附近敵人夠多、或武將血少時施放 */
+  private heroes(): void {
+    const sim = this.sim;
+    const w = sim.world;
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] !== this.player || w.state[id] === S.Dead || !UNIT_DEFS[w.utype[id]].hero) continue;
+      const key = UNIT_DEFS[w.utype[id]].id;
+      const sk = SKILLS[key];
+      if (!sk || w.skillReady[id] > sim.tick) continue;
+      // 附近 7 格內的敵人
+      let n = 0;
+      let sx = 0;
+      let sy = 0;
+      const r = 7 * ONE;
+      for (let j = 0; j < w.high; j++) {
+        if (!w.alive[j] || w.owner[j] === this.player || w.state[j] === S.Dead || UNIT_DEFS[w.utype[j]].worker) continue;
+        const dx = w.x[j] - w.x[id];
+        const dy = w.y[j] - w.y[id];
+        if (dx * dx + dy * dy > r * r) continue;
+        n++;
+        sx += w.x[j];
+        sy += w.y[j];
+      }
+      const hurt = w.hp[id] * 10 < sim.abilities.maxHp(id) * 4;
+      if (n >= 5 || (hurt && n >= 1 && (key === 'hero_xiahou' || key === 'hero_simayi'))) {
+        const tx = n ? Math.trunc(sx / n) : w.x[id];
+        const ty = n ? Math.trunc(sy / n) : w.y[id];
+        if (key === 'hero_luxun' && !this.enemyBuildingNear(tx, ty)) continue;
+        sim.issue({ t: 'skill', player: this.player, id, x: tx, y: ty });
+      }
+    }
+  }
+
+  private enemyBuildingNear(x: number, y: number): boolean {
+    const bs = this.sim.buildings;
+    for (let b = 0; b < bs.high; b++) {
+      if (!bs.alive[b] || bs.owner[b] === this.player) continue;
+      const dx = (bs.centerX(b) - x) >> FX_SHIFT;
+      const dy = (bs.centerY(b) - y) >> FX_SHIFT;
+      if (dx * dx + dy * dy <= 36) return true;
+    }
+    return false;
+  }
+
+  /** 計策：進攻時對敵軍密集處放火攻計 */
+  private stratagems(): void {
+    const sim = this.sim;
+    if (!this.attacking || this.pl.age < 3 || sim.tick % 50 >= this.params.thinkEvery) return;
+    if (sim.abilities.stratagemBlocker(this.player, 'fire')) return;
+    if (this.pl.res[2] - this.reserve[2] < 500) return;
+    const w = sim.world;
+    const vis = sim.vision.visible[this.player];
+    // 找敵軍最密集的 4×4 區塊
+    const cnt = new Map<number, number>();
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] === this.player || w.state[id] === S.Dead || UNIT_DEFS[w.utype[id]].worker) continue;
+      const tx = w.x[id] >> FX_SHIFT;
+      const ty = w.y[id] >> FX_SHIFT;
+      if (!vis[ty * sim.map.w + tx]) continue;
+      const k = (ty >> 2) * 1024 + (tx >> 2);
+      cnt.set(k, (cnt.get(k) ?? 0) + 1);
+    }
+    let best = -1;
+    let bestN = 7;
+    for (const [k, n] of [...cnt].sort((a, b) => a[0] - b[0])) {
+      if (n > bestN) {
+        bestN = n;
+        best = k;
+      }
+    }
+    if (best < 0) return;
+    const x = (((best % 1024) << 2) + 2) << FX_SHIFT;
+    const y = ((Math.floor(best / 1024) << 2) + 2) << FX_SHIFT;
+    sim.issue({ t: 'stratagem', player: this.player, kind: 'fire', x, y });
   }
 
   private get pl() {
@@ -119,9 +259,9 @@ export class AIPlayer {
     const cnt = [0, 0, 0, 0];
     for (let id = 0; id < w.high; id++) {
       if (!w.alive[id] || w.owner[id] === this.player || w.state[id] === S.Dead) continue;
-      if (!vis[(w.y[id] >> FX_SHIFT) * sim.map.w + (w.x[id] >> FX_SHIFT)]) continue;
+      if (!this.params.cheat && !vis[(w.y[id] >> FX_SHIFT) * sim.map.w + (w.x[id] >> FX_SHIFT)]) continue;
       const d = UNIT_DEFS[w.utype[id]];
-      if (d.worker) continue;
+      if (d.worker || d.naval || !d.attack) continue;
       if (d.tags & TAG.siege) cnt[3]++;
       else if (d.tags & TAG.archer) cnt[2]++;
       else if (d.tags & TAG.cavalry) cnt[1]++;
@@ -165,6 +305,8 @@ export class AIPlayer {
       else if (pl.res[k] > 800) ratio[k] = Math.trunc(ratio[k] / 2);
       else if (pl.res[k] < 100 && ratio[k] > 0) ratio[k] = Math.trunc((ratio[k] * 13) / 10);
     }
+    // 蓋關隘要 650 石：還沒存夠就多派人採石
+    if (age >= 3 && this.eco.countOwn('fortress').done + this.eco.countOwn('fortress').building === 0 && pl.res[3] < 650) ratio[3] = Math.max(ratio[3], 110);
     this.eco.plan.ratio = ratio;
     this.eco.plan.goldAfter = 12;
     if (age >= 4 || th < 0) return;
@@ -196,7 +338,7 @@ export class AIPlayer {
     if (th < 0) return false;
     const bs = this.sim.buildings;
     const bt = BUILDING_INDEX[id];
-    if (BUILDING_DEFS[bt].age > this.pl.age || !this.canSpend(BUILDING_DEFS[bt].cost)) return false;
+    if (BUILDING_DEFS[bt].age > this.pl.age || !this.canSpend(this.pl.buildingCost(bt))) return false;
     // 已經有一棟還沒蓋好就先等
     if (this.eco.countOwn(id).building > 0) return false;
     const spot = this.eco.findSpot(bt, bs.tx[th] + 2, bs.ty[th] + 2, 5, 20, 1);
@@ -211,7 +353,17 @@ export class AIPlayer {
     }
     if (age >= 2 && vil >= 30 && this.eco.countOwn('barracks').done < 2 && this.placeNear(th, 'barracks')) return;
     if (age >= 3 && vil >= 30) {
-      if (this.eco.countOwn('workshop').done + this.eco.countOwn('workshop').building === 0 && this.placeNear(th, 'workshop')) return;
+      if (this.eco.countOwn('workshop').done + this.eco.countOwn('workshop').building === 0) {
+        if (this.placeNear(th, 'workshop')) return;
+        // 工坊（攻城器械）優先：存木頭，別全花在出兵上
+        const c = this.pl.buildingCost(BUILDING_INDEX.workshop);
+        for (let k = 0; k < 4; k++) this.reserve[k] = Math.max(this.reserve[k], c[k]);
+        return;
+      }
+      // 關隘：勢力特殊兵種 ＋ 武將
+      if (vil >= 34 && this.eco.countOwn('fortress').done + this.eco.countOwn('fortress').building === 0 && this.placeNear(th, 'fortress')) return;
+      // 書院（計策）排在關隘之後，而且要有一定兵力
+      if (vil >= 40 && this.eco.countOwn('fortress').done > 0 && this.army().length >= 12 && this.eco.countOwn('academy').done + this.eco.countOwn('academy').building === 0 && this.placeNear(th, 'academy')) return;
       for (const id of ['archery', 'stable']) if (this.eco.countOwn(id).done < 2 && this.placeNear(th, id)) return;
     }
   }
@@ -229,6 +381,8 @@ export class AIPlayer {
       // 軍事科技（鐵匠鋪、兵種升級）等有一定兵力再研究，資源先拿去出兵
       const military = BUILDING_DEFS[t.building].id !== 'town_hall' && !['granary', 'lumber_camp', 'mine_camp'].includes(BUILDING_DEFS[t.building].id);
       if (military && armySize < 10) continue;
+      // 三國特色科技（書院、關隘、市集、船塢）等兵力更多再研究
+      if (['academy', 'fortress', 'market', 'dock'].includes(BUILDING_DEFS[t.building].id) && armySize < 18) continue;
       if (this.pl.techs.has(tech) || t.age > this.pl.age || !this.canSpend(t.cost)) continue;
       for (let b = 0; b < bs.high; b++) {
         if (!bs.alive[b] || bs.owner[b] !== this.player || bs.btype[b] !== t.building || !bs.complete[b]) continue;
@@ -259,6 +413,16 @@ export class AIPlayer {
       add('ram', 4);
     }
     if (age >= 4) add('trebuchet', 2);
+    if (age >= 3) {
+      add(UNIQUE[this.pl.faction] ?? 'heavy_cav', 5);
+      // 武將：本勢力第一位能招募的
+      for (const d of UNIT_DEFS) if (d.hero && d.faction === this.pl.faction) add(d.id, 6);
+    }
+    if (this.sim.map.type === 'chibi' || this.sim.map.type === 'yangtze') {
+      add('galley', this.sim.map.type === 'chibi' ? 4 : 2);
+      if (age >= 3) add('mengchong', 2);
+      if (age >= 3 && this.pl.faction === 'wu') add('fire_ship', 2);
+    }
     // 反制：敵騎多 → 槍；敵弓多 → 騎；敵步兵多 → 弓
     const [inf, cav, arc] = this.seen;
     const total = inf + cav + arc + 1;
@@ -286,7 +450,7 @@ export class AIPlayer {
     for (let b = 0; b < bs.high; b++) {
       if (!bs.alive[b] || bs.owner[b] !== this.player || !bs.complete[b] || bs.research[b] >= 0) continue;
       const def = BUILDING_DEFS[bs.btype[b]];
-      if (def.id === 'town_hall' || !def.trains.length || bs.queue[b].length >= 2) continue;
+      if (def.id === 'town_hall' || def.id === 'academy' || !def.trains.length || bs.queue[b].length >= 2) continue;
       // 這棟能生的兵種裡，缺最多、而且付得起的
       let best = -1;
       let bestScore = -Infinity;
@@ -295,7 +459,7 @@ export class AIPlayer {
         const ud = UNIT_DEFS[ut];
         if (UNIT_DEFS[base].age > age) continue;
         if ((ud.tags & TAG.siege) && siegeCount >= 4) continue;
-        if (!this.canSpend(ud.cost)) continue;
+        if (!this.canSpend(this.pl.unitCost(ut)) || this.sim.economy.trainBlocker(this.player, ut)) continue;
         const wv = (want.get(base) ?? 0) + (want.get(ut) ?? 0);
         if (wv <= 0) continue;
         const score = wv - ((have.get(ut) ?? 0) + (have.get(base) ?? 0)) / 3;
@@ -317,7 +481,7 @@ export class AIPlayer {
     for (let id = 0; id < w.high; id++) {
       if (!w.alive[id] || w.owner[id] !== this.player || w.state[id] === S.Dead) continue;
       const d = UNIT_DEFS[w.utype[id]];
-      if (d.worker || w.utype[id] === UNIT_INDEX.scout) continue;
+      if (d.worker || w.utype[id] === UNIT_INDEX.scout || !d.attack || d.fisher || d.capacity) continue;
       out.push(id);
     }
     return out;
@@ -334,8 +498,8 @@ export class AIPlayer {
     let n = 0;
     const r2 = 20 * 20 * ONE * ONE;
     for (let id = 0; id < w.high; id++) {
-      if (!w.alive[id] || w.owner[id] === this.player || w.state[id] === S.Dead || UNIT_DEFS[w.utype[id]].worker) continue;
-      if (!vis[(w.y[id] >> FX_SHIFT) * sim.map.w + (w.x[id] >> FX_SHIFT)]) continue;
+      if (!w.alive[id] || w.owner[id] === this.player || w.state[id] === S.Dead || UNIT_DEFS[w.utype[id]].worker || !UNIT_DEFS[w.utype[id]].attack) continue;
+      if (UNIT_DEFS[w.utype[id]].naval || !vis[(w.y[id] >> FX_SHIFT) * sim.map.w + (w.x[id] >> FX_SHIFT)]) continue;
       let near = false;
       for (let b = 0; b < bs.high && !near; b++) {
         if (!bs.alive[b] || bs.owner[b] !== this.player) continue;
@@ -361,10 +525,10 @@ export class AIPlayer {
     for (let b = 0; b < bs.high; b++) {
       if (!bs.alive[b] || bs.owner[b] === this.player || sim.players[bs.owner[b]].defeated) continue;
       const def = BUILDING_DEFS[bs.btype[b]];
-      if (def.wall || !exp[(bs.ty[b] + (def.h >> 1)) * sim.map.w + bs.tx[b] + (def.w >> 1)]) continue;
+      if (def.wall || def.water || (!this.params.cheat && !exp[(bs.ty[b] + (def.h >> 1)) * sim.map.w + bs.tx[b] + (def.w >> 1)])) continue;
       const dx = bs.centerX(b) - fromX;
       const dy = bs.centerY(b) - fromY;
-      const d = (dx * dx + dy * dy) / (ONE * ONE) - (def.id === 'town_hall' ? 400 : 0);
+      const d = (dx * dx + dy * dy) / (ONE * ONE) - (def.id === 'town_hall' || def.id === 'fortress' ? 400 : 0);
       if (d < bestD) {
         bestD = d;
         best = [bs.centerX(b), bs.centerY(b)];
@@ -492,8 +656,9 @@ export class AIPlayer {
     const bs = sim.buildings;
     const exp = sim.vision.explored[this.player];
     for (let b = 0; b < bs.high; b++) {
-      if (!bs.alive[b] || bs.owner[b] === this.player || BUILDING_DEFS[bs.btype[b]].id !== 'town_hall') continue;
-      if (!exp[bs.ty[b] * sim.map.w + bs.tx[b]]) continue;
+      const id0 = BUILDING_DEFS[bs.btype[b]].id;
+      if (!bs.alive[b] || bs.owner[b] === this.player || (id0 !== 'town_hall' && id0 !== 'fortress')) continue;
+      if (!this.params.cheat && !exp[bs.ty[b] * sim.map.w + bs.tx[b]]) continue;
       const dx = (bs.centerX(b) - x) >> FX_SHIFT;
       const dy = (bs.centerY(b) - y) >> FX_SHIFT;
       if (dx * dx + dy * dy <= r * r) return b;

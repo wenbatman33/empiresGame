@@ -10,14 +10,29 @@ export interface GameSetup {
   pop: number;
   speed: number;
   reveal: boolean;
+  /** 地圖類型：central、yangtze、shudao、chibi、random */
+  mapType?: string;
+  /** 玩家與電腦的勢力（wei／shu／wu；random ＝ 依種子隨機） */
+  faction?: string;
+  aiFaction?: string;
+  /** 玉璽稱帝勝利 */
+  seal?: boolean;
 }
 
-export const DEFAULT_SETUP: GameSetup = { ai: 'normal', map: 96, seed: 0, res: 0, pop: 125, speed: 1, reveal: false };
+export const DEFAULT_SETUP: GameSetup = { ai: 'normal', map: 96, seed: 0, res: 0, pop: 125, speed: 1, reveal: false, mapType: 'central', faction: 'random', aiFaction: 'random', seal: true };
+
+const MAP_TYPE_KEYS = ['central', 'yangtze', 'shudao', 'chibi', 'random'];
+const FACTION_KEYS = ['wei', 'shu', 'wu', 'random'];
 
 export function readSetup(p: URLSearchParams): GameSetup {
   const ai = p.get('ai');
+  const pick = (k: string, list: string[], def: string) => (list.includes(p.get(k) ?? '') ? p.get(k)! : def);
   return {
-    ai: ai === 'easy' || ai === 'hard' ? ai : 'normal',
+    ai: ai === 'easy' || ai === 'hard' || ai === 'insane' ? ai : 'normal',
+    mapType: pick('mt', MAP_TYPE_KEYS, 'central'),
+    faction: pick('f', FACTION_KEYS, 'random'),
+    aiFaction: pick('af', FACTION_KEYS, 'random'),
+    seal: p.get('seal') !== '0',
     map: Number(p.get('map')) === 128 ? 128 : 96,
     seed: Number(p.get('seed')) || 20261001,
     res: [0, 500, 2000].includes(Number(p.get('res'))) ? Number(p.get('res')) : 0,
@@ -28,7 +43,20 @@ export function readSetup(p: URLSearchParams): GameSetup {
 }
 
 export function setupQuery(s: GameSetup): string {
-  const q = new URLSearchParams({ play: '1', ai: s.ai, map: String(s.map), seed: String(s.seed), res: String(s.res), pop: String(s.pop), speed: String(s.speed), reveal: s.reveal ? '1' : '0' });
+  const q = new URLSearchParams({
+    play: '1',
+    ai: s.ai,
+    map: String(s.map),
+    mt: s.mapType ?? 'central',
+    f: s.faction ?? 'random',
+    af: s.aiFaction ?? 'random',
+    seal: s.seal === false ? '0' : '1',
+    seed: String(s.seed),
+    res: String(s.res),
+    pop: String(s.pop),
+    speed: String(s.speed),
+    reveal: s.reveal ? '1' : '0',
+  });
   const dev = new URLSearchParams(location.search).get('dev');
   if (dev !== null) q.set('dev', dev);
   return `?${q.toString()}`;
@@ -54,11 +82,15 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
           <button class="menu-btn" data-act="help">❓ 操作說明</button>
         </div>
         <div class="menu-setup" hidden>
-          <label>對手難度<select data-k="ai"><option value="easy">簡單</option><option value="normal" selected>普通</option><option value="hard">困難</option></select></label>
+          <label>我的勢力<select data-k="faction"><option value="random" selected>隨機</option><option value="wei">魏（騎兵、屯田）</option><option value="shu">蜀（武將、高地）</option><option value="wu">吳（水軍、火攻）</option></select></label>
+          <label>對手勢力<select data-k="aiFaction"><option value="random" selected>隨機</option><option value="wei">魏</option><option value="shu">蜀</option><option value="wu">吳</option></select></label>
+          <label>對手難度<select data-k="ai"><option value="easy">簡單</option><option value="normal" selected>普通</option><option value="hard">困難</option><option value="insane">瘋狂（作弊）</option></select></label>
+          <label>地圖<select data-k="mapType"><option value="central" selected>中原（陸戰）</option><option value="yangtze">長江（渡河、水軍）</option><option value="shudao">蜀道（山地隘口）</option><option value="chibi">赤壁（水戰）</option><option value="random">隨機</option></select></label>
           <label>地圖大小<select data-k="map"><option value="96" selected>小（1v1，建議手機）</option><option value="128">中</option></select></label>
           <label>起始資源<select data-k="res"><option value="0" selected>標準</option><option value="500">充足</option><option value="2000">豐厚</option></select></label>
           <label>人口上限<select data-k="pop"><option value="75">75</option><option value="125" selected>125</option><option value="200">200</option></select></label>
           <label>遊戲速度<select data-k="speed"><option value="0.75">慢</option><option value="1" selected>標準</option><option value="1.5">快</option></select></label>
+          <label>玉璽稱帝<select data-k="seal"><option value="1" selected>開啟</option><option value="0">關閉</option></select></label>
           <label>揭露地圖<select data-k="reveal"><option value="0" selected>否（戰爭迷霧）</option><option value="1">是</option></select></label>
           <label>地圖種子<input data-k="seed" type="number" value="${s.seed}"></label>
           <div class="menu-row">
@@ -67,7 +99,8 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
           </div>
         </div>
         <div class="menu-help" hidden>
-          <p><b>目標</b>：摧毀敵方太守府並消滅所有民夫。</p>
+          <p><b>目標</b>：摧毀敵方太守府與關隘並消滅所有民夫；或建成奇觀（魏銅雀台、蜀劍閣、吳黃鶴樓）守住 5 分鐘；或讓謀士把傳國玉璽送回書院守住 5 分鐘（稱帝）。</p>
+          <p><b>三國特色</b>：關隘可招募武將（每位武將有主動技，選取後按 Q 或點 ✨ 技能鈕施放）、勢力特殊兵種；書院可施放計策、研究謀士科技；謀士可勸降敵兵與治療友軍。</p>
           <p><b>PC</b>：左鍵選取／拖曳框選、右鍵移動／採集／建造／攻擊、雙擊選同類、WASD 或滑鼠碰邊緣捲動、滾輪縮放、空白鍵跳到交戰處、Ctrl＋數字編隊。指令卡快捷鍵 Q E R T F G Z X C V。</p>
           <p><b>手機</b>：點兵選取、長按拖曳框選、點地面或資源下指令、雙指縮放、單指拖曳捲動。</p>
           <p><b>經濟</b>：民夫採集糧木金石，蓋民居加人口，太守府升時代解鎖新兵種。<b>相剋</b>：槍剋騎、騎剋弓、弓剋步、刀盾剋槍、攻城剋建築。</p>
@@ -91,6 +124,10 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
       opts.onStart({
         ai: get('ai') as Difficulty,
         map: Number(get('map')),
+        mapType: get('mapType'),
+        faction: get('faction'),
+        aiFaction: get('aiFaction'),
+        seal: get('seal') === '1',
         res: Number(get('res')),
         pop: Number(get('pop')),
         speed: Number(get('speed')),
@@ -128,13 +165,20 @@ export function showPauseMenu(root: HTMLElement, acts: Record<string, () => void
 }
 
 /** 結算畫面 */
-export function showGameOver(root: HTMLElement, win: boolean, rows: [string, string, string][], acts: { again: () => void; menu: () => void; watch: () => void }): void {
+const WIN_TEXT: Record<string, [string, string]> = {
+  conquest: ['天下歸心，霸業可成！', '勝敗乃兵家常事，請重整旗鼓。'],
+  seal: ['傳國玉璽在手，登基稱帝！', '敵方挾玉璽稱帝，天命已失……'],
+  wonder: ['奇觀巍然屹立，四海賓服！', '敵方奇觀落成，大勢已去……'],
+  resign: ['敵軍棄城投降！', '我軍已投降。'],
+};
+
+export function showGameOver(root: HTMLElement, win: boolean, rows: [string, string, string][], acts: { again: () => void; menu: () => void; watch: () => void }, reason = 'conquest'): void {
   const table = rows.map(([k, a, b]) => `<tr><th>${k}</th><td>${a}</td><td>${b}</td></tr>`).join('');
   const m = el(`
     <div class="menu-screen dim">
       <div class="menu-card">
         <div class="menu-title ${win ? 'win' : 'lose'}">${win ? '勝 利' : '戰 敗'}</div>
-        <div class="menu-sub">${win ? '天下歸心，霸業可成！' : '勝敗乃兵家常事，請重整旗鼓。'}</div>
+        <div class="menu-sub">${(WIN_TEXT[reason] ?? WIN_TEXT.conquest)[win ? 0 : 1]}</div>
         <table class="stats"><tr><th></th><td>我軍</td><td>敵軍</td></tr>${table}</table>
         <div class="menu-row">
           <button class="menu-btn" data-act="watch">👀 看戰場</button>

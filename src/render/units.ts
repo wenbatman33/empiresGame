@@ -2,12 +2,12 @@
 // 每幀從模擬層讀位置（前後兩個 tick 內插）、算朝向、決定動畫，寫進實例屬性
 import * as THREE from 'three';
 import { PLAYER_COLORS, UNIT_LOOK } from '../config';
-import { buildRam, buildTrebuchet } from '../models/siege';
+import { buildSiege } from '../models/siege';
 import { buildSoldier, SIEGE_KINDS, SOLDIER_SPECS, type AnimName } from '../models/soldier';
 import { CAPACITY, S, UNIT_DEFS } from '../sim/core/world';
 import { ONE } from '../sim/core/fixed';
 import type { Sim } from '../sim/sim';
-import type { Terrain } from './terrain';
+import { WATER_Y, type Terrain } from './terrain';
 import { bakeVat, makeVatDepthMaterial, makeVatMaterial, vatTime, type BakedModel } from './vat';
 
 const MAX_PER_TYPE = 2048;
@@ -40,7 +40,7 @@ export class UnitRenderer {
     for (const def of UNIT_DEFS) {
       const siege = SIEGE_KINDS[def.id];
       const spec = SOLDIER_SPECS[def.id] ?? SOLDIER_SPECS.swordsman;
-      const baked = siege ? bakeVat(siege === 'ram' ? buildRam() : buildTrebuchet(), siege) : bakeVat(buildSoldier(spec), spec.kind);
+      const baked = siege ? bakeVat(buildSiege(def.id, siege), siege) : bakeVat(buildSoldier(spec), spec.kind);
       const mesh = new THREE.InstancedMesh(baked.geometry, makeVatMaterial(baked.texture), MAX_PER_TYPE);
       mesh.customDepthMaterial = makeVatDepthMaterial(baked.texture);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -88,16 +88,23 @@ export class UnitRenderer {
       }
       const x = (w.px[id] + (w.x[id] - w.px[id]) * alpha) / ONE;
       const z = (w.py[id] + (w.y[id] - w.py[id]) * alpha) / ONE;
-      let y = this.terrain.heightAt(x, z);
+      const naval = UNIT_DEFS[w.utype[id]].naval;
+      let y = naval ? WATER_Y - 0.12 : this.terrain.heightAt(x, z);
+      // 坐船的兵不畫
+      if (w.aboard[id] >= 0) {
+        this.seen[id] = 0;
+        continue;
+      }
       // 屍體最後 1.5 秒沉入地面
-      if (w.state[id] === S.Dead) {
+      if (w.state[id] === S.Dead && !naval) {
         const since = (sim.tick - w.stateTick[id]) / 10;
         if (since > 4.5) y -= (since - 4.5) * 0.5;
       }
       this.wx[id] = x;
       this.wy[id] = y;
       this.wz[id] = z;
-      this.seen[id] = w.owner[id] === myPlayer || visible(Math.floor(x), Math.floor(z)) ? 1 : 0;
+      // 敵方隱形單位（甘寧百騎劫營）不畫
+      this.seen[id] = w.owner[id] === myPlayer || (visible(Math.floor(x), Math.floor(z)) && w.stealthUntil[id] <= sim.tick) ? 1 : 0;
       if (!this.seen[id]) continue;
 
       // 朝向平滑轉動

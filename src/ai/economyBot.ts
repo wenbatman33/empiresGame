@@ -1,6 +1,6 @@
 // 經濟機器人（docs/05 §6 經濟經理）：只讀模擬狀態、只下指令，確定性
 // M1 用來跑「標準建造順序」驗證經濟節奏（docs/06 §10），M3 起當電腦 AI 的經濟模組
-import { BUILDING_DEFS, BUILDING_INDEX, RK, UNIT_DEFS, UNIT_INDEX, type Cost } from '../sim/core/defs';
+import { BUILDING_DEFS, BUILDING_INDEX, RK, UNIT_INDEX, type Cost } from '../sim/core/defs';
 import { FX_SHIFT, ONE } from '../sim/core/fixed';
 import { S, TASK } from '../sim/core/world';
 import type { Sim } from '../sim/sim';
@@ -194,7 +194,7 @@ export class EconomyBot {
   build(btypeId: string, spot: [number, number] | null, worker: number): boolean {
     if (!spot || worker < 0) return false;
     const bt = BUILDING_INDEX[btypeId];
-    if (!this.afford(BUILDING_DEFS[bt].cost)) return false;
+    if (!this.afford(this.sim.players[this.player].buildingCost(bt))) return false;
     this.reserved.add(worker);
     this.sim.issue({ t: 'build', player: this.player, ids: [worker], btype: bt, tx: spot[0], ty: spot[1] });
     return true;
@@ -206,7 +206,7 @@ export class EconomyBot {
     const bs = this.sim.buildings;
     const vil = this.villagers().length + bs.queue[th].length;
     if (this.plan.hold || vil >= this.plan.villagers || bs.queue[th].length >= 2 || bs.research[th] >= 0) return;
-    if (this.afford(UNIT_DEFS[UNIT_INDEX.villager].cost)) this.sim.issue({ t: 'train', player: this.player, building: th, unit: UNIT_INDEX.villager, count: 1 });
+    if (this.afford(this.sim.players[this.player].unitCost(UNIT_INDEX.villager))) this.sim.issue({ t: 'train', player: this.player, building: th, unit: UNIT_INDEX.villager, count: 1 });
   }
 
   private buildHouses(th: number): void {

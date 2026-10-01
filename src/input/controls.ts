@@ -223,7 +223,8 @@ export class Controls {
       e.preventDefault();
       return;
     }
-    if (e.code === 'Escape') {
+    if (e.code === 'Escape' && g.targeting) g.targeting = null;
+    else if (e.code === 'Escape') {
       if (g.menuOpen || (!g.placing && !g.selected.size && g.selBuilding < 0 && g.selResource < 0)) g.openMenu();
       else g.clearSelection();
     }

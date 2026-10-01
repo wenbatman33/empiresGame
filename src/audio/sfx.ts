@@ -1,7 +1,7 @@
 // 程式合成音效（docs/07 §8.2 佔位版）：WebAudio 振盪器 ＋ 雜訊，不需要音檔
 // 第一次觸控／點擊時解鎖 AudioContext（手機規定）
 
-type Sfx = 'click' | 'select' | 'command' | 'build' | 'done' | 'train' | 'hit' | 'arrow' | 'die' | 'alert' | 'age' | 'win' | 'lose' | 'error';
+type Sfx = 'click' | 'select' | 'command' | 'build' | 'done' | 'train' | 'hit' | 'arrow' | 'die' | 'alert' | 'age' | 'win' | 'lose' | 'error' | 'skill' | 'fire';
 
 class Audio {
   private ctx: AudioContext | null = null;
@@ -153,6 +153,17 @@ class Audio {
         break;
       case 'error':
         this.tone(180, 0.15, 'square', 0.08);
+        break;
+      case 'skill':
+        // 武將技：重鼓兩下 ＋ 上揚的號角
+        this.drum(0, 0.7);
+        this.drum(0.16, 0.6);
+        this.tone(330, 0.5, 'sawtooth', 0.1, 0.1, 1.5);
+        this.hiss(0.4, 1200, 0.15, 0.05, 0.8);
+        break;
+      case 'fire':
+        this.hiss(0.8, 600, 0.2, 0, 0.5);
+        this.hiss(0.6, 1800, 0.08, 0.2, 1);
         break;
     }
   }

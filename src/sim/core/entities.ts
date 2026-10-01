@@ -158,10 +158,61 @@ export class Player {
   /** 建築攻擊與射程加成 */
   readonly bAtk = new Int32Array(BUILDING_DEFS.length);
   readonly bRange = new Int32Array(BUILDING_DEFS.length);
+  /** 一次射幾箭（連弩改良） */
+  readonly uVolley = new Int32Array(UNIT_DEFS.length);
+  /** 書院、市集等的玩家層級加成（千分比或數值） */
+  healMul = 1000;
+  convertMul = 1000;
+  buildingHpMul = 1000;
+  buildingArmor = 0;
+  tradeFee = 30;
+  freeReseed = false;
+  /** 吳的火矢：箭點燃建築的機率（%） */
+  fireArrows = 0;
+  /** 勢力（'wei' | 'shu' | 'wu'） */
+  faction: string;
+  /** 武將：陣亡過的種類（半價復活）與陣亡 tick */
+  readonly heroDeath = new Map<number, number>();
+  /** 計策冷卻：種類 → 可再用的 tick */
+  readonly stratagemReady = new Map<string, number>();
+  /** 市集價格（每 100 單位要幾金），依交易浮動 */
+  readonly price = [100, 100, 100, 100];
 
-  constructor(start: Cost) {
+  constructor(start: Cost, faction = 'wei') {
     this.res = [...start] as Cost;
+    this.faction = faction;
     this.recompute();
+  }
+
+  /** 依勢力的生產花費（蜀武將 −25%、吳船 −15%；陣亡武將半價） */
+  unitCost(ut: number): Cost {
+    const d = UNIT_DEFS[ut];
+    let mul = 100;
+    if (d.hero && this.faction === 'shu') mul = 75;
+    if (d.naval && this.faction === 'wu') mul = 85;
+    if (d.hero && this.heroDeath.has(ut)) mul = Math.trunc(mul / 2);
+    return d.cost.map((v) => Math.trunc((v * mul) / 100)) as Cost;
+  }
+
+  /** 建築花費（魏的農田木材 −40%） */
+  buildingCost(bt: number): Cost {
+    const d = BUILDING_DEFS[bt];
+    if (d.id === 'farm' && this.faction === 'wei') return d.cost.map((v) => Math.trunc((v * 75) / 100)) as Cost;
+    return d.cost;
+  }
+
+  /** 生產時間（魏群雄割據起民夫快 10%、吳船塢快 20%） */
+  trainTicks(ut: number): number {
+    const d = UNIT_DEFS[ut];
+    let t = d.trainTicks;
+    if (d.worker && this.faction === 'wei' && this.age >= 2) t = Math.trunc((t * 90) / 100);
+    if (d.naval && this.faction === 'wu') t = Math.trunc((t * 80) / 100);
+    return t;
+  }
+
+  /** 農田重播花費（屯田制：免費） */
+  get reseedWood(): number {
+    return this.freeReseed ? 0 : this.faction === 'wei' ? Math.trunc((ECONOMY.farmReseedWood * 75) / 100) : ECONOMY.farmReseedWood;
   }
 
   /** 依已研究科技重算所有數值（科技數量少，直接從頭算，結果一定一致） */
@@ -177,6 +228,14 @@ export class Player {
     });
     this.bAtk.fill(0);
     this.bRange.fill(0);
+    UNIT_DEFS.forEach((d, i) => (this.uVolley[i] = d.volley));
+    this.healMul = 1000;
+    this.convertMul = 1000;
+    this.buildingHpMul = 1000;
+    this.buildingArmor = 0;
+    this.tradeFee = 30;
+    this.freeReseed = false;
+    this.fireArrows = 0;
     this.gatherMul = [1000, 1000, 1000, 1000];
     this.farmMul = 1000;
     this.farmFood = 0;
@@ -195,6 +254,13 @@ export class Player {
         if (e.target === 'player') {
           const mul = Math.round((e.mul ?? 1) * 1000);
           if (e.stat === 'carry') this.carryCap += e.add ?? 0;
+          else if (e.stat === 'heal') this.healMul = Math.trunc((this.healMul * mul) / 1000);
+          else if (e.stat === 'convert') this.convertMul = Math.trunc((this.convertMul * mul) / 1000);
+          else if (e.stat === 'buildingHp') this.buildingHpMul = Math.trunc((this.buildingHpMul * mul) / 1000);
+          else if (e.stat === 'buildingArmor') this.buildingArmor += e.add ?? 0;
+          else if (e.stat === 'tradeFee') this.tradeFee += e.add ?? 0;
+          else if (e.stat === 'freeReseed') this.freeReseed = true;
+          else if (e.stat === 'fireArrows') this.fireArrows += e.add ?? 0;
           else if (e.stat === 'farmFood') this.farmFood += e.add ?? 0;
           else if (e.stat === 'gather.farm') this.farmMul = Math.trunc((this.farmMul * mul) / 1000);
           else if (e.stat.startsWith('gather.')) {
@@ -216,7 +282,7 @@ export class Player {
           const mul = e.mul ?? 1;
           switch (e.stat) {
             case 'attack':
-              this.uAtk[i] += add;
+              this.uAtk[i] = e.mul ? Math.round(this.uAtk[i] * mul) : this.uAtk[i] + add;
               break;
             case 'armorM':
               this.uArmM[i] += add;
@@ -225,7 +291,10 @@ export class Player {
               this.uArmP[i] += add;
               break;
             case 'hp':
-              this.uHp[i] += add;
+              this.uHp[i] = e.mul ? Math.round(this.uHp[i] * mul) : this.uHp[i] + add;
+              break;
+            case 'volley':
+              this.uVolley[i] += add;
               break;
             case 'range':
               this.uRange[i] += d.rangeFx > 0 ? add << 10 : 0;
@@ -237,7 +306,38 @@ export class Player {
         });
       }
     }
+    this.applyFaction();
   }
+
+  /** 勢力被動（docs/02 §2） */
+  private applyFaction(): void {
+    UNIT_DEFS.forEach((d, i) => {
+      if (this.faction === 'wei' && d.tags & TAG.cavalry) this.uHp[i] = Math.round((this.uHp[i] * 110) / 100);
+      if (this.faction === 'shu') {
+        if (d.hero) this.uAtk[i] = Math.round((this.uAtk[i] * 115) / 100);
+        if (d.tags & TAG.infantry && !d.worker) {
+          this.uSpeed[i] = Math.round((this.uSpeed[i] * 110) / 100);
+          // 步兵 HP ＋10%（AI 對戰平衡後追加，docs/02 §2）
+          this.uHp[i] = Math.round((this.uHp[i] * 110) / 100);
+        }
+      }
+      if (this.faction === 'wu' && d.tags & TAG.archer && !(d.tags & TAG.ship) && this.age >= 2) {
+        this.uRange[i] += 1 << 10;
+        // 弓兵 HP ＋10%（AI 對戰平衡後追加，docs/02 §2）
+        this.uHp[i] = Math.round((this.uHp[i] * 110) / 100);
+      }
+    });
+    if (this.faction === 'wu') {
+      // 漁船採集 ＋15%：用採糧倍率套在漁船上（economy 依資源種類取用）
+      this.fishMul = 1150;
+      // 江東造船之鄉：伐木 ＋10%（AI 對戰平衡後追加，docs/02 §2）
+      this.gatherMul[1] = Math.trunc((this.gatherMul[1] * 110) / 100);
+    } else {
+      this.fishMul = 1000;
+    }
+  }
+
+  fishMul = 1000;
 
   canAfford(c: Cost): boolean {
     return this.res[0] >= c[0] && this.res[1] >= c[1] && this.res[2] >= c[2] && this.res[3] >= c[3];

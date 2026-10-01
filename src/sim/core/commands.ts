@@ -34,7 +34,18 @@ export type Command =
   | { t: 'research'; tick: number; player: number; building: number; tech: number }
   | { t: 'cancelResearch'; tick: number; player: number; building: number }
   /** 投降 */
-  | { t: 'resign'; tick: number; player: number };
+  | { t: 'resign'; tick: number; player: number }
+  /** 武將主動技（x,y 為目標點，定點數） */
+  | { t: 'skill'; tick: number; player: number; id: number; x: number; y: number }
+  /** 計策（docs/02 §4.2） */
+  | { t: 'stratagem'; tick: number; player: number; kind: string; x: number; y: number }
+  /** 謀士撿兵書、玉璽 */
+  | { t: 'pickup'; tick: number; player: number; ids: number[]; item: number }
+  /** 上運兵船、在 (x,y) 附近卸兵 */
+  | { t: 'board'; tick: number; player: number; ids: number[]; ship: number }
+  | { t: 'unload'; tick: number; player: number; ship: number; x: number; y: number }
+  /** 市集買賣（res：0 糧、1 木、3 石；buy＝用金買） */
+  | { t: 'trade'; tick: number; player: number; res: number; buy: boolean };
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 export type CommandInput = DistributiveOmit<Command, 'tick'>;

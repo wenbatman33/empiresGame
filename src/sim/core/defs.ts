@@ -51,10 +51,43 @@ export interface UnitDef {
   setupTicks: number;
   /** 只打建築（衝車） */
   buildingsOnly: boolean;
+  /** 勢力專屬（'' ＝ 共通） */
+  faction: string;
+  hero: boolean;
+  /** 衝鋒：第一下 ×2（虎豹騎） */
+  charge: boolean;
+  /** 一次射幾箭（連弩兵、樓船） */
+  volley: number;
+  /** 移動式存放點（木牛流馬） */
+  dropsite: boolean;
+  /** 水軍：只能在水上 */
+  naval: boolean;
+  /** 漁船：只能採魚 */
+  fisher: boolean;
+  /** 運兵船載量 */
+  capacity: number;
+  /** 自爆半徑（火船，定點數） */
+  explodeFx: number;
 }
 
 export const UNIT_DEFS: UnitDef[] = unitsData.map((u) => {
-  const raw = u as typeof u & { worker?: boolean; bonus?: Record<string, number>; minRange?: number; splash?: number; setup?: number; buildingsOnly?: boolean };
+  const raw = u as typeof u & {
+    worker?: boolean;
+    bonus?: Record<string, number>;
+    minRange?: number;
+    splash?: number;
+    setup?: number;
+    buildingsOnly?: boolean;
+    faction?: string;
+    hero?: boolean;
+    charge?: boolean;
+    volley?: number;
+    dropsite?: boolean;
+    naval?: boolean;
+    fisher?: boolean;
+    capacity?: number;
+    explode?: number;
+  };
   return {
     id: u.id,
     name: u.name,
@@ -77,6 +110,15 @@ export const UNIT_DEFS: UnitDef[] = unitsData.map((u) => {
     splashFx: toFx(raw.splash ?? 0),
     setupTicks: Math.round((raw.setup ?? 0) * TICK_HZ),
     buildingsOnly: !!raw.buildingsOnly,
+    faction: raw.faction ?? '',
+    hero: !!raw.hero,
+    charge: !!raw.charge,
+    volley: raw.volley ?? 1,
+    dropsite: !!raw.dropsite,
+    naval: !!raw.naval,
+    fisher: !!raw.fisher,
+    capacity: raw.capacity ?? 0,
+    explodeFx: toFx(raw.explode ?? 0),
   };
 });
 export const UNIT_INDEX: Record<string, number> = Object.fromEntries(UNIT_DEFS.map((u, i) => [u.id, i]));
@@ -104,10 +146,17 @@ export interface BuildingDef {
   cooldownTicks: number;
   /** 牆（拖曳成一列放置） */
   wall: boolean;
+  /** 一次射幾箭（關隘） */
+  arrows: number;
+  /** 蓋在水上（船塢） */
+  water: boolean;
+  /** 城門：自己人能過、敵人不能 */
+  gate: boolean;
+  wonder: boolean;
 }
 
 export const BUILDING_DEFS: BuildingDef[] = buildingsData.map((b) => {
-  const raw = b as typeof b & { pop?: number; drop?: string[]; trains?: string[]; walkable?: boolean; food?: number; attack?: number; range?: number; cooldown?: number; wall?: boolean };
+  const raw = b as typeof b & { pop?: number; drop?: string[]; trains?: string[]; walkable?: boolean; food?: number; attack?: number; range?: number; cooldown?: number; wall?: boolean; arrows?: number; water?: boolean; gate?: boolean; wonder?: boolean };
   return {
     id: b.id,
     name: b.name,
@@ -127,7 +176,11 @@ export const BUILDING_DEFS: BuildingDef[] = buildingsData.map((b) => {
     attack: raw.attack ?? 0,
     rangeFx: toFx(raw.range ?? 0),
     cooldownTicks: Math.round((raw.cooldown ?? 2) * TICK_HZ),
-    wall: !!raw.wall,
+    wall: !!raw.wall || !!raw.gate,
+    arrows: raw.arrows ?? 1,
+    water: !!raw.water,
+    gate: !!raw.gate,
+    wonder: !!raw.wonder,
   };
 });
 export const BUILDING_INDEX: Record<string, number> = Object.fromEntries(BUILDING_DEFS.map((b, i) => [b.id, i]));
@@ -183,10 +236,12 @@ export interface TechDef {
   effects: TechEffect[];
   req: string;
   ageUp: boolean;
+  /** 勢力專屬科技 */
+  faction: string;
 }
 
 export const TECH_DEFS: TechDef[] = techsData.map((t) => {
-  const raw = t as typeof t & { req?: string; ageUp?: boolean };
+  const raw = t as typeof t & { req?: string; ageUp?: boolean; faction?: string };
   return {
     id: t.id,
     name: t.name,
@@ -197,8 +252,16 @@ export const TECH_DEFS: TechDef[] = techsData.map((t) => {
     effects: t.effects as TechEffect[],
     req: raw.req ?? '',
     ageUp: !!raw.ageUp,
+    faction: raw.faction ?? '',
   };
 });
+
+/** 勢力（docs/02 §1） */
+export const FACTIONS = ['wei', 'shu', 'wu'] as const;
+export type Faction = (typeof FACTIONS)[number];
+export const FACTION_NAMES: Record<string, string> = { wei: '魏', shu: '蜀', wu: '吳' };
+/** 各勢力的奇觀名稱（docs/02 §5） */
+export const WONDER_NAMES: Record<string, string> = { wei: '銅雀台', shu: '劍閣', wu: '黃鶴樓' };
 export const TECH_INDEX: Record<string, number> = Object.fromEntries(TECH_DEFS.map((t, i) => [t.id, i]));
 /** 升時代的前置：不算這些建築 */
 export const AGE_EXCLUDE = new Set(['house', 'farm', 'palisade', 'wall', 'town_hall', 'tower']);

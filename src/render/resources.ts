@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { RESOURCE_MODELS } from '../models/resources';
 import { RESOURCE_KINDS, RK } from '../sim/core/defs';
 import type { Sim } from '../sim/sim';
-import type { Terrain } from './terrain';
+import { WATER_Y, type Terrain } from './terrain';
 import { withFog } from './fog';
 
 export class ResourceRenderer {
@@ -65,8 +65,10 @@ export class ResourceRenderer {
       const sc = animal ? 1 : 0.55 + 0.45 * frac;
       // 動物開始被採就倒下
       this.e.set(0, yaw, animal && touched ? Math.PI / 2 : 0);
+      const fish = k === RK.fish;
+      if (fish) this.e.set(0, yaw, 0);
       this.q.setFromEuler(this.e);
-      this.v.set(x, this.terrain.heightAt(x, z) + (animal && touched ? 0.12 : 0), z);
+      this.v.set(x, fish ? WATER_Y : this.terrain.heightAt(x, z) + (animal && touched ? 0.12 : 0), z);
       this.s.set(sc, sc, sc);
       this.m.compose(this.v, this.q, this.s);
       mesh.setMatrixAt(n[k]++, this.m);

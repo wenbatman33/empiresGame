@@ -7,8 +7,9 @@ import { FX_SHIFT, ONE, isqrt, tileCenter, toFx } from './core/fixed';
 import { Hasher } from './core/hash';
 import { Rng } from './core/rng';
 import { NAV, ORDER, S, TASK, World } from './core/world';
-import { generateCentralPlains } from './map/generator';
-import { PASS_BLOCKED, T, basePass, type MapGrid } from './map/grid';
+import { generateMap } from './map/generator';
+import { PASS_BLOCKED, T, basePass, baseWaterPass, type MapGrid } from './map/grid';
+import { AbilitySystem } from './systems/abilities';
 import { CombatSystem } from './systems/combat';
 import { EconomySystem } from './systems/economy';
 import { MovementSystem } from './systems/movement';
@@ -18,6 +19,8 @@ import { VisionSystem } from './systems/vision';
 export interface SimOptions {
   seed: number;
   mapSize?: number;
+  /** 地圖類型：central、yangtze、shudao、chibi、random */
+  mapType?: string;
   /** 測試用：直接給地圖 */
   map?: MapGrid;
   /** standard：每位玩家一座太守府 ＋ 民夫；empty：空地圖 */
@@ -28,6 +31,10 @@ export interface SimOptions {
   handicap?: number[];
   /** 人口上限 */
   popLimit?: number;
+  /** 各玩家勢力（空字串或省略 ＝ 依種子隨機） */
+  factions?: string[];
+  /** 玉璽稱帝勝利（預設開啟） */
+  seal?: boolean;
 }
 
 /** 給渲染與 UI 的事件（不影響模擬狀態，不算進雜湊） */
@@ -41,7 +48,14 @@ export type SimEvent =
   | { t: 'died'; id: number; player: number; utype: number }
   | { t: 'research'; player: number; tech: number }
   | { t: 'defeated'; player: number }
-  | { t: 'gameOver'; winner: number };
+  | { t: 'gameOver'; winner: number; reason?: string }
+  | { t: 'converted'; id: number; from: number; to: number }
+  | { t: 'itemPicked'; item: number; player: number }
+  | { t: 'itemStored'; item: number; player: number }
+  | { t: 'skill'; id: number; player: number; skill: string; x: number; y: number }
+  | { t: 'stratagem'; player: number; kind: string; x: number; y: number }
+  | { t: 'levelUp'; id: number; level: number }
+  | { t: 'wonder'; id: number; player: number };
 
 interface FlowEntry {
   field: FlowField;
@@ -62,7 +76,11 @@ export class Sim {
   readonly projectiles = new Projectiles();
   readonly players: Player[] = [];
   readonly rng: Rng;
+  /** 陸地與水面兩套尋路 */
   readonly pf: Pathfinder;
+  readonly pfWater: Pathfinder;
+  /** 城門：每格屬於哪位玩家（-1 ＝ 不是城門） */
+  readonly gateOwner: Int16Array;
   /** 每格上的資源點／建築 id（-1 ＝ 沒有） */
   readonly resTile: Int32Array;
   readonly bldTile: Int32Array;
@@ -72,6 +90,10 @@ export class Sim {
   readonly economy: EconomySystem;
   readonly combat: CombatSystem;
   readonly vision: VisionSystem;
+  readonly abilities: AbilitySystem;
+  /** 勝利原因：conquest、seal（稱帝）、wonder、resign */
+  winReason = '';
+  readonly sealVictory: boolean;
   private readonly flows = new Map<number, FlowEntry>();
   private readonly flowByKey = new Map<number, number>();
   private nextFlow = 1;
@@ -92,21 +114,27 @@ export class Sim {
   constructor(opts: SimOptions) {
     this.seed = opts.seed >>> 0;
     this.rng = new Rng(this.seed);
-    this.map = opts.map ?? generateCentralPlains(this.seed, opts.mapSize ?? 128);
+    this.map = opts.map ?? generateMap(opts.mapType ?? 'central', this.seed, opts.mapSize ?? 128);
     this.pf = new Pathfinder(this.map);
+    this.pfWater = new Pathfinder(this.map, true);
+    this.gateOwner = new Int16Array(this.map.w * this.map.h).fill(-1);
     this.resTile = new Int32Array(this.map.w * this.map.h).fill(-1);
     this.bldTile = new Int32Array(this.map.w * this.map.h).fill(-1);
     this.movement = new MovementSystem(this);
     this.economy = new EconomySystem(this);
     this.combat = new CombatSystem(this);
     const nPlayers = Math.max(2, this.map.starts.length);
+    this.sealVictory = opts.seal !== false;
+    const fr = new Rng(this.seed ^ 0x51ed270b);
     for (let p = 0; p < nPlayers; p++) {
-      const pl = new Player(ECONOMY.start.map((v) => v + (opts.bonusRes ?? 0)) as typeof ECONOMY.start);
+      const faction = opts.factions?.[p] || ['wei', 'shu', 'wu'][fr.int(3)];
+      const pl = new Player(ECONOMY.start.map((v) => v + (opts.bonusRes ?? 0)) as typeof ECONOMY.start, faction);
       pl.handicap = opts.handicap?.[p] ?? 1000;
       this.players.push(pl);
     }
     this.popLimit = opts.popLimit ?? ECONOMY.popLimit;
     this.vision = new VisionSystem(this);
+    this.abilities = new AbilitySystem(this);
     this.createResources();
     if ((opts.start ?? (opts.map ? 'empty' : 'standard')) === 'standard') this.standardStart();
   }
@@ -162,10 +190,26 @@ export class Sim {
     }
     this.economy.step();
     this.combat.step();
+    this.abilities.step();
+    this.abilities.stepPickups();
     this.movement.step();
     this.vision.step();
     if (this.tick % 10 === 0) this.checkVictory();
     this.tick++;
+  }
+
+  /** 移速倍率（%） */
+  speedPct(id: number): number {
+    return this.abilities.speedPct(id);
+  }
+
+  /** 直接宣告勝利（稱帝、奇觀） */
+  declareWinner(player: number, reason: string): void {
+    if (this.winner >= 0) return;
+    for (let p = 0; p < this.players.length; p++) if (p !== player) this.players[p].defeated = true;
+    this.winner = player;
+    this.winReason = reason;
+    this.events.push({ t: 'gameOver', winner: player, reason });
   }
 
   /** 征服勝利（docs/01 §3）：失去所有太守府且沒有民夫 → 判負；只剩一方 → 勝利 */
@@ -175,7 +219,11 @@ export class Sim {
     const hasTh = new Uint8Array(n);
     const hasVil = new Uint8Array(n);
     const bs = this.buildings;
-    for (let b = 0; b < bs.high; b++) if (bs.alive[b] && bs.complete[b] && BUILDING_DEFS[bs.btype[b]].id === 'town_hall') hasTh[bs.owner[b]] = 1;
+    for (let b = 0; b < bs.high; b++) {
+      if (!bs.alive[b] || !bs.complete[b]) continue;
+      const id = BUILDING_DEFS[bs.btype[b]].id;
+      if (id === 'town_hall' || id === 'fortress') hasTh[bs.owner[b]] = 1;
+    }
     const w = this.world;
     for (let id = 0; id < w.high; id++) if (w.alive[id] && w.state[id] !== S.Dead && UNIT_DEFS[w.utype[id]].worker) hasVil[w.owner[id]] = 1;
     for (let p = 0; p < n; p++) {
@@ -198,7 +246,8 @@ export class Sim {
     const alive = this.players.map((pl, i) => (pl.defeated ? -1 : i)).filter((i) => i >= 0);
     if (alive.length === 1) {
       this.winner = alive[0];
-      this.events.push({ t: 'gameOver', winner: this.winner });
+      this.winReason = this.winReason || 'conquest';
+      this.events.push({ t: 'gameOver', winner: this.winner, reason: this.winReason });
     }
   }
 
@@ -210,8 +259,12 @@ export class Sim {
     if (pl) {
       this.world.hp[id] = pl.uHp[ut];
       this.world.speed[id] = pl.uSpeed[ut];
-      pl.stats.trained++;
+      if (UNIT_DEFS[ut].pop > 0) pl.stats.trained++;
+      // 武將復活後恢復原價
+      if (UNIT_DEFS[ut].hero) pl.heroDeath.delete(ut);
     }
+    // 謀士預設不主動出手（只治療）；木牛流馬、船隻不打人
+    if (ut === UNIT_INDEX.strategist || UNIT_DEFS[ut].attack <= 0) this.world.stance[id] = 3;
     return id;
   }
 
@@ -268,7 +321,8 @@ export class Sim {
     const rs = this.res;
     for (let r = 0; r < rs.high; r++) if (rs.alive[r]) h.add(r).add(rs.amount[r]);
     for (const p of this.players) h.addArray(p.res).add(p.pop).add(p.popCap).add(p.age).add(p.techs.size).add(p.defeated ? 1 : 0);
-    h.add(this.projectiles.count);
+    h.add(this.projectiles.count).add(this.abilities.areas.length).add(this.abilities.burning.size);
+    for (const it of this.abilities.items) h.add(it.carrier).add(it.academy).add(it.x).add(it.y);
     h.addArray(this.rng.getState());
     return h.value();
   }
@@ -308,7 +362,18 @@ export class Sim {
         this.cmdBuildLine(c.player, c.ids, c.btype, c.x0, c.y0, c.x1, c.y1);
         break;
       case 'resign':
-        if (this.players[c.player]) this.defeat(c.player);
+        if (this.players[c.player]) {
+          this.winReason = 'resign';
+          this.defeat(c.player);
+        }
+        break;
+      case 'skill':
+      case 'stratagem':
+      case 'pickup':
+      case 'board':
+      case 'unload':
+      case 'trade':
+        this.abilities.apply(c);
         break;
       case 'clear':
         for (let id = 0; id < this.world.high; id++) if (this.world.alive[id]) this.releaseNav(id);
@@ -347,8 +412,9 @@ export class Sim {
     }
     let first = -1;
     for (const [tx, ty] of tiles) {
-      if (!pl.canAfford(def.cost) || !this.canPlace(btype, tx, ty)) continue;
-      pl.pay(def.cost);
+      const cost = pl.buildingCost(btype);
+      if (!pl.canAfford(cost) || !this.canPlace(btype, tx, ty)) continue;
+      pl.pay(cost);
       const b = this.placeBuilding(btype, player, tx, ty, false);
       if (first < 0) first = b;
     }
@@ -370,7 +436,8 @@ export class Sim {
   /** 在 (x,y) 附近以 0.7 格間距由內往外排開 */
   private cmdSpawn(player: number, unit: number, x: number, y: number, count: number): void {
     if (unit < 0 || unit >= UNIT_DEFS.length || player < 0 || player >= this.players.length) return;
-    const [ctx, cty] = this.pf.nearestWalkable(x >> FX_SHIFT, y >> FX_SHIFT);
+    const pf = UNIT_DEFS[unit].naval ? this.pfWater : this.pf;
+    const [ctx, cty] = pf.nearestWalkable(x >> FX_SHIFT, y >> FX_SHIFT);
     const cx = tileCenter(ctx);
     const cy = tileCenter(cty);
     const sp = toFx(0.7);
@@ -381,7 +448,7 @@ export class Sim {
           if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
           const px = cx + i * sp;
           const py = cy + j * sp;
-          if (px < 0 || py < 0 || px >= this.map.widthFx || py >= this.map.heightFx || !this.map.walkableFx(px, py)) continue;
+          if (px < 0 || py < 0 || px >= this.map.widthFx || py >= this.map.heightFx || !pf.okFx(px, py)) continue;
           this.spawnUnit(unit, player, px, py);
           placed++;
         }
@@ -390,19 +457,27 @@ export class Sim {
   }
 
   private cmdMove(player: number, rawIds: number[], x: number, y: number, order: number, spread: boolean): void {
+    const all = this.ownedIds(player, rawIds).filter((id) => this.world.aboard[id] < 0);
+    const land = all.filter((id) => !UNIT_DEFS[this.world.utype[id]].naval);
+    const sea = all.filter((id) => UNIT_DEFS[this.world.utype[id]].naval);
+    if (land.length) this.cmdMoveDomain(land, x, y, order, spread, this.pf);
+    if (sea.length) this.cmdMoveDomain(sea, x, y, order, spread, this.pfWater);
+  }
+
+  private cmdMoveDomain(ids: number[], x: number, y: number, order: number, spread: boolean, pf: Pathfinder): void {
     const w = this.world;
-    const ids = this.ownedIds(player, rawIds);
-    if (!ids.length) return;
     x = Math.max(0, Math.min(this.map.widthFx - 1, x));
     y = Math.max(0, Math.min(this.map.heightFx - 1, y));
-    const exact = this.map.walkableFx(x, y);
-    const [gtx, gty] = this.pf.nearestWalkable(x >> FX_SHIFT, y >> FX_SHIFT);
+    const exact = pf.okFx(x, y);
+    const [gtx, gty] = pf.nearestWalkable(x >> FX_SHIFT, y >> FX_SHIFT);
     const gx = exact ? x : tileCenter(gtx);
     const gy = exact ? y : tileCenter(gty);
     const group = this.nextGroup++;
     this.groups.set(group, ids.length);
-    const slots = this.formationSlots(ids, gx, gy, spread);
-    const flowId = ids.length >= FLOW_MIN_GROUP ? this.acquireFlow(gtx, gty) : -1;
+    const slots = this.formationSlots(ids, gx, gy, spread, pf);
+    const flowId = ids.length >= FLOW_MIN_GROUP ? this.acquireFlow(gtx, gty, pf) : -1;
+    // 先暫時持有：迴圈裡釋放舊導航時，若舊的也是同一張流場，不能被丟掉
+    if (flowId >= 0) this.flows.get(flowId)!.refs++;
     for (let k = 0; k < ids.length; k++) {
       const id = ids[k];
       this.releaseNav(id);
@@ -418,24 +493,27 @@ export class Sim {
       this.setState(id, S.Move);
       const dx = sx - w.x[id];
       const dy = sy - w.y[id];
-      if (dx * dx + dy * dy < 16 * ONE * ONE && this.pf.los(w.x[id], w.y[id], sx, sy)) {
+      if (dx * dx + dy * dy < 16 * ONE * ONE && pf.los(w.x[id], w.y[id], sx, sy)) {
         w.nav[id] = NAV.Direct;
       } else if (flowId >= 0) {
         w.nav[id] = NAV.Flow;
         w.flow[id] = flowId;
         this.flows.get(flowId)!.refs++;
       } else {
-        this.setPath(id, this.pf.findPath(w.x[id], w.y[id], sx, sy));
+        this.setPath(id, pf.findPath(w.x[id], w.y[id], sx, sy));
       }
     }
-    if (flowId >= 0 && this.flows.get(flowId)!.refs === 0) this.dropFlow(flowId);
+    if (flowId >= 0) {
+      const e = this.flows.get(flowId)!;
+      if (--e.refs <= 0) this.dropFlow(flowId);
+    }
   }
 
   /**
    * 陣型站位：以移動方向為前方排成方陣
    * 離目標最近的單位排前排，同一排依左右位置排序，減少交叉
    */
-  private formationSlots(ids: number[], gx: number, gy: number, spread = false): Int32Array {
+  private formationSlots(ids: number[], gx: number, gy: number, spread = false, pf: Pathfinder = this.pf): Int32Array {
     const w = this.world;
     const n = ids.length;
     const out = new Int32Array(n * 2);
@@ -487,8 +565,8 @@ export class Sim {
         let py = gy + Math.trunc((ly * colOff + fy * rowOff) / ONE);
         px = Math.max(0, Math.min(this.map.widthFx - 1, px));
         py = Math.max(0, Math.min(this.map.heightFx - 1, py));
-        if (!this.map.walkableFx(px, py)) {
-          const [tx, ty] = this.pf.nearestWalkable(px >> FX_SHIFT, py >> FX_SHIFT);
+        if (!pf.okFx(px, py)) {
+          const [tx, ty] = pf.nearestWalkable(px >> FX_SHIFT, py >> FX_SHIFT);
           px = tileCenter(tx);
           py = tileCenter(ty);
         }
@@ -523,8 +601,9 @@ export class Sim {
     this.setState(id, S.Move);
     const dx = x - w.x[id];
     const dy = y - w.y[id];
-    if (dx * dx + dy * dy < 16 * ONE * ONE && this.pf.los(w.x[id], w.y[id], x, y)) w.nav[id] = NAV.Direct;
-    else this.setPath(id, this.pf.findPath(w.x[id], w.y[id], x, y));
+    const pf = this.pfOf(id);
+    if (dx * dx + dy * dy < 16 * ONE * ONE && pf.los(w.x[id], w.y[id], x, y)) w.nav[id] = NAV.Direct;
+    else this.setPath(id, pf.findPath(w.x[id], w.y[id], x, y));
   }
 
   stopMoving(id: number): void {
@@ -575,11 +654,11 @@ export class Sim {
     return this.groups.get(group) ?? 1;
   }
 
-  private acquireFlow(gtx: number, gty: number): number {
-    const key = (this.map.passVersion * this.map.h + gty) * this.map.w + gtx;
+  private acquireFlow(gtx: number, gty: number, pf: Pathfinder): number {
+    const key = ((this.map.passVersion * 2 + (pf.water ? 1 : 0)) * this.map.h + gty) * this.map.w + gtx;
     const existing = this.flowByKey.get(key);
     if (existing !== undefined) return existing;
-    const field = this.pf.flowField(gtx, gty);
+    const field = pf.flowField(gtx, gty);
     this.stats.flowBuilds++;
     this.lastFlow = field;
     const id = this.nextFlow++;
@@ -601,13 +680,41 @@ export class Sim {
 
   // ───────── 地圖佔用 ─────────
 
-  /** 依地形、建築、資源重算一格的通行性 */
+  /** 依地形、建築、資源重算一格的通行性（陸地與水面） */
   refreshPass(i: number): void {
     let p = basePass(this.map.tiles[i]);
+    let wp = baseWaterPass(this.map.tiles[i]);
     const b = this.bldTile[i];
-    if (b >= 0 && !BUILDING_DEFS[this.buildings.btype[b]].walkable) p = PASS_BLOCKED;
+    this.gateOwner[i] = -1;
+    if (b >= 0) {
+      const d = BUILDING_DEFS[this.buildings.btype[b]];
+      // 城門：大家的尋路都當成可走，移動時才擋住敵人
+      if (d.gate && this.buildings.complete[b]) this.gateOwner[i] = this.buildings.owner[b];
+      else if (!d.walkable) p = PASS_BLOCKED;
+      wp = 0;
+    }
     if (this.resTile[i] >= 0) p = PASS_BLOCKED;
     this.map.pass[i] = p;
+    this.map.wpass[i] = wp;
+  }
+
+  /** 單位所在領域的尋路器 */
+  pfOf(id: number): Pathfinder {
+    return UNIT_DEFS[this.world.utype[id]].naval ? this.pfWater : this.pf;
+  }
+
+  /** 這個單位能不能站在 (x,y)：領域通行性 ＋ 敵方城門 */
+  canStand(id: number, x: number, y: number): boolean {
+    const pf = this.pfOf(id);
+    if (!pf.okFx(x, y)) return false;
+    const g = this.gateOwner[(y >> FX_SHIFT) * this.map.w + (x >> FX_SHIFT)];
+    return g < 0 || g === this.world.owner[id];
+  }
+
+  hasWonder(player: number): boolean {
+    const bs = this.buildings;
+    for (let b = 0; b < bs.high; b++) if (bs.alive[b] && bs.owner[b] === player && BUILDING_DEFS[bs.btype[b]].wonder) return true;
+    return false;
   }
 
   /** 能不能在 (tx,ty) 放這種建築（左上角） */
@@ -620,9 +727,24 @@ export class Sim {
         if (!m.inBounds(x, y)) return false;
         const i = m.idx(x, y);
         const t = m.tiles[i];
-        if (t !== T.Grass && t !== T.Dirt && t !== T.Sand) return false;
+        if (def.water ? t !== T.Shallow && t !== T.Deep : t !== T.Grass && t !== T.Dirt && t !== T.Sand) return false;
         if (this.resTile[i] >= 0 || this.bldTile[i] >= 0) return false;
       }
+    }
+    if (def.water) {
+      // 船塢：要貼著陸地（民夫才蓋得到），旁邊也要有水（船才出得去）
+      let land = false;
+      let sea = false;
+      for (let y = ty - 1; y <= ty + def.h; y++) {
+        for (let x = tx - 1; x <= tx + def.w; x++) {
+          if (x >= tx && x < tx + def.w && y >= ty && y < ty + def.h) continue;
+          if (!m.inBounds(x, y)) continue;
+          const i = m.idx(x, y);
+          if (m.pass[i] !== PASS_BLOCKED && m.tiles[i] !== T.Deep) land = true;
+          if (m.wpass[i]) sea = true;
+        }
+      }
+      return land && sea;
     }
     return true;
   }
@@ -638,29 +760,47 @@ export class Sim {
         this.refreshPass(i);
       }
     }
-    if (!def.walkable) {
+    if (!def.walkable || def.water) {
       m.passVersion++;
       // 站在地基上的單位推到旁邊
       const w = this.world;
       for (let id = 0; id < w.high; id++) {
-        if (!w.alive[id] || m.walkableFx(w.x[id], w.y[id])) continue;
-        const [nx, ny] = this.pf.nearestWalkable(w.x[id] >> FX_SHIFT, w.y[id] >> FX_SHIFT);
+        if (!w.alive[id] || this.pfOf(id).okFx(w.x[id], w.y[id])) continue;
+        const [nx, ny] = this.pfOf(id).nearestWalkable(w.x[id] >> FX_SHIFT, w.y[id] >> FX_SHIFT);
         w.x[id] = w.px[id] = tileCenter(nx);
         w.y[id] = w.py[id] = tileCenter(ny);
       }
     }
     this.events.push({ t: 'bPlaced', id: b });
-    if (complete) this.events.push({ t: 'bComplete', id: b });
+    if (complete) {
+      this.onFinished(b);
+      this.events.push({ t: 'bComplete', id: b });
+    }
     return b;
   }
 
   completeBuilding(b: number): void {
-    const bs = this.buildings;
-    bs.complete[b] = 1;
+    this.buildings.complete[b] = 1;
+    this.onFinished(b);
     this.events.push({ t: 'bComplete', id: b });
     const w = this.world;
     for (let id = 0; id < w.high; id++) {
       if (w.alive[id] && w.task[id] === TASK.Build && w.target[id] === b) this.economy.afterBuilt(id, b);
+    }
+  }
+
+  /** 建築完工：奇觀開始倒數、城門改成自己人可通行 */
+  private onFinished(b: number): void {
+    const bs = this.buildings;
+    const bd = BUILDING_DEFS[bs.btype[b]];
+    if (bd.wonder) {
+      this.abilities.wonders.set(b, this.tick);
+      this.events.push({ t: 'wonder', id: b, player: bs.owner[b] });
+    }
+    if (bd.gate) {
+      // 城門完工：改成「自己人可通行」
+      for (let y = bs.ty[b]; y < bs.ty[b] + bd.h; y++) for (let x = bs.tx[b]; x < bs.tx[b] + bd.w; x++) this.refreshPass(this.map.idx(x, y));
+      this.map.passVersion++;
     }
   }
 
@@ -688,7 +828,7 @@ export class Sim {
   exhaustFarm(b: number): void {
     const bs = this.buildings;
     const pl = this.players[bs.owner[b]];
-    const wood = ECONOMY.farmReseedWood;
+    const wood = pl.reseedWood;
     if (pl.autoReseed && pl.res[1] >= wood) {
       pl.res[1] -= wood;
       bs.food[b] = BUILDING_DEFS[bs.btype[b]].food + pl.farmFood;
@@ -718,13 +858,15 @@ export class Sim {
   }
 
   /** 找最近的存放點（收這種資源、已完工、自己的） */
-  nearestDrop(player: number, resType: number, x: number, y: number, exclude = -1): number {
+  nearestDrop(player: number, resType: number, x: number, y: number, exclude = -1, naval = false): number {
     const bs = this.buildings;
     let best = -1;
     let bestD = Infinity;
     for (let b = 0; b < bs.high; b++) {
       if (b === exclude || !bs.alive[b] || !bs.complete[b] || bs.owner[b] !== player) continue;
-      if (!BUILDING_DEFS[bs.btype[b]].drop[resType]) continue;
+      const d0 = BUILDING_DEFS[bs.btype[b]];
+      // 船只能交到船塢；陸上單位不交到船塢
+      if (!d0.drop[resType] || !!d0.water !== naval) continue;
       const dx = bs.centerX(b) - x;
       const dy = bs.centerY(b) - y;
       const d = dx * dx + dy * dy;
@@ -786,10 +928,12 @@ export class Sim {
     const gy = bs.rallyY[b] >= 0 ? bs.rallyY[b] : m.heightFx >> 1;
     let best = -1;
     let bestD = Infinity;
+    const naval = UNIT_DEFS[utype].naval;
+    const okTile = (x: number, y: number) => (naval ? this.pfWater.ok(x, y) : m.walkable(x, y));
     for (let y = ty - 1; y <= ty + def.h; y++) {
       for (let x = tx - 1; x <= tx + def.w; x++) {
         if (x >= tx && x < tx + def.w && y >= ty && y < ty + def.h) continue;
-        if (!m.walkable(x, y)) continue;
+        if (!okTile(x, y)) continue;
         const dx = tileCenter(x) - gx;
         const dy = tileCenter(y) - gy;
         const d = dx * dx + dy * dy;
@@ -805,7 +949,7 @@ export class Sim {
       sx = tileCenter(best % m.w);
       sy = tileCenter(Math.floor(best / m.w));
     } else {
-      const [nx, ny] = this.pf.nearestWalkable(tx + (def.w >> 1), ty + def.h);
+      const [nx, ny] = (naval ? this.pfWater : this.pf).nearestWalkable(tx + (def.w >> 1), ty + def.h);
       sx = tileCenter(nx);
       sy = tileCenter(ny);
     }

@@ -10,8 +10,9 @@ const TILE_COLOR: Record<number, number> = {
   [T.Dirt]: 0xbba06a,
   [T.Sand]: 0xe3cf93,
   [T.Shallow]: 0xc7b582,
-  [T.Deep]: 0x6c8879,
+  [T.Deep]: 0x4f6f72,
   [T.Forest]: 0x5f8f37,
+  [T.Rock]: 0x8a8378,
 };
 /** 小地圖配色（sRGB） */
 const MINIMAP_COLOR: Record<number, number> = {
@@ -21,6 +22,7 @@ const MINIMAP_COLOR: Record<number, number> = {
   [T.Shallow]: 0x6fb0dc,
   [T.Deep]: 0x3f7fbf,
   [T.Forest]: 0x3c7430,
+  [T.Rock]: 0x7a746a,
 };
 export const WATER_Y = WATER_LEVEL / HEIGHT_UNIT;
 
@@ -84,14 +86,56 @@ export class Terrain {
       }
     }
     this.group.add(this.buildSkirt());
+    const rocks = this.buildRocks();
+    if (rocks) this.group.add(rocks);
 
     const water = new THREE.Mesh(
       new THREE.PlaneGeometry(w, h).rotateX(-Math.PI / 2).translate(w / 2, WATER_Y, h / 2),
-      withFog(new THREE.MeshPhongMaterial({ color: 0x4a93cc, transparent: true, opacity: 0.74, shininess: 70, specular: 0xcfe9ff })),
+      withFog(new THREE.MeshPhongMaterial({ color: 0x3f86c2, transparent: true, opacity: 0.78, shininess: 40, specular: 0x4a6a80 })),
     );
     water.receiveShadow = true;
     water.renderOrder = 1;
     this.group.add(water);
+  }
+
+  /** 山崖格（蜀道）：每格 1–2 塊岩石，讓山脊有立體感 */
+  private buildRocks(): THREE.InstancedMesh | null {
+    const m = this.map;
+    const cells: number[] = [];
+    for (let i = 0; i < m.w * m.h; i++) if (m.tiles[i] === T.Rock) cells.push(i);
+    if (!cells.length) return null;
+    const geo = new THREE.IcosahedronGeometry(0.5, 0);
+    const mesh = new THREE.InstancedMesh(geo, withFog(new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true })), cells.length * 2);
+    const mat = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const v = new THREE.Vector3();
+    const sc = new THREE.Vector3();
+    const col = new THREE.Color();
+    let n = 0;
+    for (const i of cells) {
+      const tx = i % m.w;
+      const ty = Math.floor(i / m.w);
+      // 固定的偽亂數（同一張地圖每次長得一樣）
+      const h = ((tx * 73856093) ^ (ty * 19349663)) >>> 0;
+      for (let k = 0; k < 1 + (h & 1); k++) {
+        const r = ((h >>> (k * 8)) & 255) / 255;
+        const x = tx + 0.3 + r * 0.4;
+        const z = ty + 0.3 + (((h >>> (k * 8 + 4)) & 15) / 15) * 0.4;
+        e.set(r * 3, r * 6, 0);
+        v.set(x, this.heightAt(x, z) + 0.15, z);
+        const s0 = 0.7 + r * 0.4;
+        sc.set(s0, s0 * (0.9 + r), s0);
+        mat.compose(v, q.setFromEuler(e), sc);
+        mesh.setMatrixAt(n, mat);
+        mesh.setColorAt(n, col.setHex(r > 0.5 ? 0xb3ab9c : 0x978f80));
+        n++;
+      }
+    }
+    mesh.count = n;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
   }
 
   /** 頂點高度（世界單位） */

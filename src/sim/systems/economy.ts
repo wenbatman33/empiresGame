@@ -1,6 +1,6 @@
 // 經濟系統（docs/04、docs/06）：民夫採集／回倉／建造／耕田、施工進度、生產佇列、人口
 import type { Command } from '../core/commands';
-import { AGE_EXCLUDE, BUILDING_DEFS, ECONOMY, RESOURCE_KINDS, RK, TECH_DEFS, TECH_INDEX, UNIT_DEFS, type Cost } from '../core/defs';
+import { AGE_EXCLUDE, BUILDING_DEFS, ECONOMY, RESOURCE_KINDS, RK, TECH_DEFS, TECH_INDEX, UNIT_DEFS, UNIT_INDEX, type Cost } from '../core/defs';
 import { FX_SHIFT, ONE, isqrt } from '../core/fixed';
 import { S, TASK } from '../core/world';
 import type { Sim } from '../sim';
@@ -211,7 +211,9 @@ export class EconomySystem {
       }
       this.face(id, res.x[r], res.y[r]);
       w.carryRes[id] = kd.res;
-      w.gatherAcc[id] += Math.trunc((Math.trunc((kd.rateMilli * pl.gatherMul[kd.res]) / 1000) * pl.handicap) / 1000);
+      // 漁船用捕魚倍率；民夫吃孫權「江東之主」加成
+      const mul = UNIT_DEFS[w.utype[id]].fisher ? pl.fishMul : Math.trunc((pl.gatherMul[kd.res] * sim.abilities.gatherBoost(w.owner[id])) / 1000);
+      w.gatherAcc[id] += Math.trunc((Math.trunc((kd.rateMilli * mul) / 1000) * pl.handicap) / 1000);
       while (w.gatherAcc[id] >= 1000 && res.amount[r] > 0 && w.carry[id] < pl.carryCap) {
         w.gatherAcc[id] -= 1000;
         w.carry[id]++;
@@ -287,7 +289,27 @@ export class EconomySystem {
       w.prevTask[id] = w.task[id];
       w.prevTarget[id] = w.target[id];
     }
-    const drop = sim.nearestDrop(w.owner[id], w.carryRes[id], w.x[id], w.y[id]);
+    const naval = UNIT_DEFS[w.utype[id]].naval;
+    const drop = sim.nearestDrop(w.owner[id], w.carryRes[id], w.x[id], w.y[id], -1, naval);
+    // 木牛流馬：移動式存放點，比建築近就交給它
+    const cart = naval ? -1 : this.nearestCart(id);
+    if (cart >= 0) {
+      let closer = drop < 0;
+      if (!closer) {
+        const bx = sim.buildings.centerX(drop) - w.x[id];
+        const by = sim.buildings.centerY(drop) - w.y[id];
+        const cx = w.x[cart] - w.x[id];
+        const cy = w.y[cart] - w.y[id];
+        closer = cx * cx + cy * cy < bx * bx + by * by;
+      }
+      if (closer) {
+        w.task[id] = TASK.Return;
+        w.target[id] = -2 - cart;
+        w.attempts[id] = 0;
+        this.approach(id, this.cartRect(cart));
+        return;
+      }
+    }
     if (drop < 0) {
       // 沒有存放點：原地閒置，帶著資源
       w.task[id] = TASK.None;
@@ -304,17 +326,53 @@ export class EconomySystem {
     this.approach(id, this.bRect(drop));
   }
 
+  /** 最近的自家木牛流馬 */
+  private nearestCart(id: number): number {
+    const w = this.sim.world;
+    const ct = UNIT_INDEX.ox_cart;
+    let best = -1;
+    let bestD = Infinity;
+    for (let j = 0; j < w.high; j++) {
+      if (!w.alive[j] || w.utype[j] !== ct || w.owner[j] !== w.owner[id] || w.state[j] === S.Dead || w.aboard[j] >= 0) continue;
+      const dx = w.x[j] - w.x[id];
+      const dy = w.y[j] - w.y[id];
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = j;
+      }
+    }
+    return best;
+  }
+
+  private cartRect(c: number): Rect {
+    const w = this.sim.world;
+    const h = w.radius[c];
+    return { x0: w.x[c] - h, y0: w.y[c] - h, x1: w.x[c] + h, y1: w.y[c] + h };
+  }
+
   private returnTask(id: number): void {
     const sim = this.sim;
     const w = sim.world;
     const bs = sim.buildings;
     const b = w.target[id];
-    if (b < 0 || !bs.alive[b] || !bs.complete[b] || !BUILDING_DEFS[bs.btype[b]].drop[w.carryRes[id]]) {
+    let rect: Rect;
+    if (b <= -2) {
+      const c = -2 - b;
+      if (!w.alive[c] || w.state[c] === S.Dead || w.owner[c] !== w.owner[id]) {
+        this.startReturn(id);
+        return;
+      }
+      rect = this.cartRect(c);
+      // 車在動：每秒重新對準
+      if (this.gap(id, rect) > REACH && w.state[id] !== S.Move && (sim.tick + id) % 10 === 0) this.approach(id, rect);
+    } else if (b < 0 || !bs.alive[b] || !bs.complete[b] || !BUILDING_DEFS[bs.btype[b]].drop[w.carryRes[id]]) {
       this.startReturn(id);
       return;
+    } else {
+      rect = this.bRect(b);
     }
-    const rect = this.bRect(b);
-    if (this.gap(id, rect) <= REACH) {
+    if (this.gap(id, rect) <= REACH + (b <= -2 ? ONE >> 2 : 0)) {
       // 交貨
       const pl = sim.players[w.owner[id]];
       pl.res[w.carryRes[id]] += w.carry[id];
@@ -338,10 +396,14 @@ export class EconomySystem {
       }
       return;
     }
+    if (b <= -2) {
+      if (w.state[id] !== S.Move && ++w.attempts[id] > MAX_ATTEMPTS * 3) this.idle(id);
+      return;
+    }
     if (!this.retry(id, rect)) {
       // 這個存放點到不了，換最近的另一個
       w.attempts[id] = 0;
-      const other = sim.nearestDrop(w.owner[id], w.carryRes[id], w.x[id], w.y[id], b);
+      const other = sim.nearestDrop(w.owner[id], w.carryRes[id], w.x[id], w.y[id], b, UNIT_DEFS[w.utype[id]].naval);
       if (other < 0) this.idle(id);
       else {
         w.target[id] = other;
@@ -516,14 +578,14 @@ export class EconomySystem {
         pl.housed = true;
         continue;
       }
-      if (++bs.qProgress[b] < def.trainTicks) continue;
+      if (++bs.qProgress[b] < pl.trainTicks(ut)) continue;
       bs.qProgress[b] = 0;
       bs.queue[b].shift();
       pl.pop += def.pop;
       const id = sim.spawnFromBuilding(b, ut);
       sim.events.push({ t: 'trained', id, player: bs.owner[b] });
-      if (bs.loop[b] && !bs.queue[b].length && pl.canAfford(def.cost)) {
-        pl.pay(def.cost);
+      if (bs.loop[b] && !bs.queue[b].length && pl.canAfford(pl.unitCost(ut))) {
+        pl.pay(pl.unitCost(ut));
         bs.queue[b].push(ut);
       }
     }
@@ -536,6 +598,7 @@ export class EconomySystem {
     const pl = sim.players[player];
     const t = TECH_DEFS[tech];
     if (!t || t.building !== bs.btype[b]) return '這裡不能研究';
+    if (t.faction && t.faction !== pl.faction) return '其他勢力專屬';
     if (pl.techs.has(tech)) return '已研究';
     if (t.ageUp ? pl.age !== t.age : pl.age < t.age) return t.ageUp ? '已經是這個時代' : `需要「${['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'][t.age]}」`;
     if (t.req && !pl.techs.has(TECH_INDEX[t.req])) return `需要先研究「${TECH_DEFS[TECH_INDEX[t.req]].name}」`;
@@ -553,6 +616,29 @@ export class EconomySystem {
     return '';
   }
 
+  /** 能不能生這個兵（勢力專屬、武將人數上限與復活冷卻）；回傳原因，'' ＝ 可以 */
+  trainBlocker(player: number, ut: number): string {
+    const sim = this.sim;
+    const pl = sim.players[player];
+    const d = UNIT_DEFS[ut];
+    if (d.faction && d.faction !== pl.faction) return '其他勢力專屬';
+    if (!d.hero) return '';
+    const max = pl.age >= 4 ? 2 : pl.age >= 3 ? 1 : 0;
+    let alive = 0;
+    const w = sim.world;
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] !== player || w.state[id] === S.Dead || !UNIT_DEFS[w.utype[id]].hero) continue;
+      if (w.utype[id] === ut) return '這位武將已在場上';
+      alive++;
+    }
+    const bs = sim.buildings;
+    for (let b = 0; b < bs.high; b++) if (bs.alive[b] && bs.owner[b] === player) for (const q of bs.queue[b]) if (UNIT_DEFS[q].hero) alive++;
+    if (alive >= max) return `武將同時在場上限 ${max} 名（天下一統可帶 2 名）`;
+    const died = pl.heroDeath.get(ut);
+    if (died !== undefined && sim.tick - died < 900) return `陣亡冷卻中（${Math.ceil((900 - (sim.tick - died)) / 10)} 秒）`;
+    return '';
+  }
+
   canResearch(player: number, b: number, tech: number): boolean {
     return this.researchBlocker(player, b, tech) === '' && this.sim.players[player].canAfford(TECH_DEFS[tech].cost);
   }
@@ -566,10 +652,11 @@ export class EconomySystem {
       case 'build': {
         const def = BUILDING_DEFS[c.btype];
         const pl = sim.players[c.player];
-        if (!def || !pl || def.age > pl.age || !pl.canAfford(def.cost) || !sim.canPlace(c.btype, c.tx, c.ty)) return;
+        if (!def || !pl || def.age > pl.age || !pl.canAfford(pl.buildingCost(c.btype)) || !sim.canPlace(c.btype, c.tx, c.ty)) return;
+        if (def.wonder && sim.hasWonder(c.player)) return;
         const workers = sim.ownedIds(c.player, c.ids).filter((id) => UNIT_DEFS[sim.world.utype[id]].worker);
         if (!workers.length) return;
-        pl.pay(def.cost);
+        pl.pay(pl.buildingCost(c.btype));
         const b = sim.placeBuilding(c.btype, c.player, c.tx, c.ty, false);
         workers.forEach((id, k) => {
           this.setTask(id, TASK.Build, b);
@@ -580,8 +667,11 @@ export class EconomySystem {
       case 'gather': {
         const res = sim.res;
         if (c.res < 0 || c.res >= res.high || !res.alive[c.res]) return;
+        const fish = res.kind[c.res] === RK.fish;
         sim.ownedIds(c.player, c.ids).forEach((id, k) => {
-          if (!UNIT_DEFS[sim.world.utype[id]].worker) {
+          const ud = UNIT_DEFS[sim.world.utype[id]];
+          // 魚只有漁船能捕；陸上資源只有民夫能採
+          if (fish ? !ud.fisher : !ud.worker) {
             sim.moveUnit(id, res.x[c.res], res.y[c.res]);
             return;
           }
@@ -632,11 +722,13 @@ export class EconomySystem {
         const base = def.trains.find((t) => t === c.unit || pl.upgrade[t] === c.unit);
         if (base === undefined) return;
         const ut = pl.upgrade[base];
-        if (UNIT_DEFS[ut].age > pl.age && UNIT_DEFS[base].age > pl.age) return;
-        const cost: Cost = UNIT_DEFS[ut].cost;
+        if (UNIT_DEFS[base].age > pl.age) return;
+        if (this.trainBlocker(c.player, ut)) return;
+        const cost: Cost = pl.unitCost(ut);
         for (let k = 0; k < c.count && bs.queue[b].length < ECONOMY.queueMax && pl.canAfford(cost); k++) {
           pl.pay(cost);
           bs.queue[b].push(ut);
+          if (UNIT_DEFS[ut].hero) break;
         }
         break;
       }
@@ -645,7 +737,7 @@ export class EconomySystem {
         if (b < 0 || b >= bs.high || !bs.alive[b] || bs.owner[b] !== c.player) return;
         const q = bs.queue[b];
         if (c.index < 0 || c.index >= q.length) return;
-        sim.players[c.player].refund(UNIT_DEFS[q[c.index]].cost);
+        sim.players[c.player].refund(sim.players[c.player].unitCost(q[c.index]));
         q.splice(c.index, 1);
         if (c.index === 0) bs.qProgress[b] = 0;
         break;
@@ -704,8 +796,8 @@ export class EconomySystem {
         const b = c.building;
         if (b < 0 || b >= bs.high || !bs.alive[b] || bs.owner[b] !== c.player) return;
         // 還沒開工的地基全額退費
-        if (!bs.complete[b] && bs.progress[b] === 0) sim.players[c.player].refund(BUILDING_DEFS[bs.btype[b]].cost);
-        for (const ut of bs.queue[b]) sim.players[c.player].refund(UNIT_DEFS[ut].cost);
+        if (!bs.complete[b] && bs.progress[b] === 0) sim.players[c.player].refund(sim.players[c.player].buildingCost(bs.btype[b]));
+        for (const ut of bs.queue[b]) sim.players[c.player].refund(sim.players[c.player].unitCost(ut));
         sim.removeBuilding(b);
         break;
       }

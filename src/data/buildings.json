@@ -1,5 +1,5 @@
 [
-  {"id": "town_hall", "name": "太守府", "w": 4, "h": 4, "hp": 2400, "armor": [3, 5], "sight": 8, "cost": {"wood": 275, "stone": 100}, "build": 150, "pop": 10, "drop": ["food", "wood", "gold", "stone"], "trains": ["villager"], "age": 2, "attack": 5, "range": 6, "cooldown": 2.0},
+  {"id": "town_hall", "name": "太守府", "w": 4, "h": 4, "hp": 2400, "armor": [3, 5], "sight": 8, "cost": {"wood": 275, "stone": 100}, "build": 150, "pop": 10, "drop": ["food", "wood", "gold", "stone"], "trains": ["villager", "ox_cart"], "age": 2, "attack": 5, "range": 6, "cooldown": 2.0},
   {"id": "house", "name": "民居", "w": 2, "h": 2, "hp": 550, "armor": [0, 5], "sight": 3, "cost": {"wood": 25}, "build": 20, "pop": 5, "age": 1},
   {"id": "granary", "name": "糧倉", "w": 2, "h": 2, "hp": 1000, "armor": [0, 5], "sight": 4, "cost": {"wood": 100}, "build": 30, "drop": ["food"], "age": 1},
   {"id": "lumber_camp", "name": "伐木場", "w": 2, "h": 2, "hp": 1000, "armor": [0, 5], "sight": 4, "cost": {"wood": 100}, "build": 30, "drop": ["wood"], "age": 1},
@@ -12,5 +12,11 @@
   {"id": "tower", "name": "箭塔", "w": 1, "h": 1, "hp": 1000, "armor": [1, 7], "sight": 9, "cost": {"wood": 25, "stone": 125}, "build": 60, "age": 2, "attack": 5, "range": 8, "cooldown": 2.0},
   {"id": "palisade", "name": "柵欄", "w": 1, "h": 1, "hp": 250, "armor": [0, 0], "sight": 2, "cost": {"wood": 2}, "build": 3, "age": 1, "wall": true},
   {"id": "wall", "name": "石牆", "w": 1, "h": 1, "hp": 1800, "armor": [8, 10], "sight": 2, "cost": {"stone": 5}, "build": 6, "age": 2, "wall": true},
-  {"id": "workshop", "name": "工坊", "w": 4, "h": 4, "hp": 1500, "armor": [0, 5], "sight": 4, "cost": {"wood": 200}, "build": 50, "trains": ["ram", "trebuchet"], "age": 3}
+  {"id": "workshop", "name": "工坊", "w": 4, "h": 4, "hp": 1500, "armor": [0, 5], "sight": 4, "cost": {"wood": 200}, "build": 50, "trains": ["ram", "trebuchet"], "age": 3},
+  {"id": "fortress", "name": "關隘", "w": 4, "h": 4, "hp": 4800, "armor": [8, 11], "sight": 9, "cost": {"stone": 650}, "build": 160, "pop": 10, "trains": ["tiger_cav", "repeater", "danyang", "hero_liubei", "hero_guanyu", "hero_zhangfei", "hero_zhaoyun", "hero_zhuge", "hero_caocao", "hero_xiahou", "hero_zhangliao", "hero_simayi", "hero_sunquan", "hero_zhouyu", "hero_luxun", "hero_ganning"], "age": 3, "attack": 8, "range": 8, "cooldown": 2.0, "arrows": 3},
+  {"id": "academy", "name": "書院", "w": 3, "h": 3, "hp": 2100, "armor": [3, 5], "sight": 5, "cost": {"stone": 175}, "build": 40, "trains": ["strategist"], "age": 3},
+  {"id": "market", "name": "市集", "w": 4, "h": 4, "hp": 1500, "armor": [0, 5], "sight": 4, "cost": {"wood": 175}, "build": 60, "age": 2},
+  {"id": "dock", "name": "船塢", "w": 3, "h": 3, "hp": 1800, "armor": [0, 5], "sight": 5, "cost": {"wood": 150}, "build": 35, "trains": ["fishing_boat", "transport", "galley", "mengchong", "louchuan", "fire_ship"], "drop": ["food"], "age": 1, "water": true},
+  {"id": "gate", "name": "城門", "w": 1, "h": 1, "hp": 2750, "armor": [6, 6], "sight": 3, "cost": {"stone": 30}, "build": 40, "age": 2, "gate": true},
+  {"id": "wonder", "name": "奇觀", "w": 5, "h": 5, "hp": 4800, "armor": [8, 10], "sight": 6, "cost": {"wood": 800, "gold": 800, "stone": 800}, "build": 300, "age": 4, "wonder": true}
 ]

@@ -23,8 +23,8 @@ const PART_COUNT = 14;
 /** 騎手坐在馬上的高度 */
 const SADDLE = 0.36;
 
-export type WeaponKind = 'sword' | 'spear' | 'bow' | 'tool' | 'ram' | 'trebuchet';
-export type HatKind = 'helmet' | 'straw' | 'band';
+export type WeaponKind = 'sword' | 'spear' | 'bow' | 'tool' | 'fan' | 'ram' | 'trebuchet' | 'cart' | 'ship';
+export type HatKind = 'helmet' | 'straw' | 'band' | 'crown' | 'scholar';
 
 export interface SoldierSpec {
   kind: WeaponKind;
@@ -43,6 +43,25 @@ export interface SoldierSpec {
   halberd?: boolean;
   /** 頭盔紅纓改金色（精銳） */
   elite?: boolean;
+  /** 武將：整體放大（docs/02 §3.3：一般兵的 1.3 倍） */
+  scale?: number;
+  /** 臉色（關羽紅臉、張飛黑臉） */
+  face?: number;
+  /** 鬍鬚：顏色與樣式（long 過胸長鬚、bushy 虯鬚） */
+  beard?: number;
+  beardStyle?: 'long' | 'bushy';
+  /** 帽子／頭巾顏色 */
+  hatColor?: number;
+  /** 披風 */
+  cape?: number;
+  /** 雙手持兵（劉備雙股劍、甘寧雙刀） */
+  dual?: boolean;
+  /** 偃月刀：大月牙刃 */
+  glaive?: boolean;
+  /** 長袍（文官、謀士） */
+  robe?: boolean;
+  /** 獨眼眼罩（夏侯惇） */
+  eyePatch?: boolean;
 }
 
 /** 各兵種外觀（docs/03 §5 剪影重點） */
@@ -60,9 +79,39 @@ export const SOLDIER_SPECS: Record<string, SoldierSpec> = {
   crossbowman: { kind: 'bow', hat: 'helmet', cloth: 0x45602e, trim: 0x6f7780, pants: 0x3a3a2a, pauldrons: true },
   swift_cav: { kind: 'spear', hat: 'helmet', cloth: 0x8a3a2a, trim: 0xb8952f, pants: 0x3f352a, horse: 0xc9b896, elite: true },
   iron_cav: { kind: 'sword', hat: 'helmet', cloth: 0x3c4148, trim: 0x2a2d32, pants: 0x2a2a2a, horse: 0x2a2420, barding: true, pauldrons: true, shield: true, elite: true },
+  // 勢力特殊兵種
+  tiger_cav: { kind: 'spear', hat: 'helmet', cloth: 0x3a3226, trim: 0xd08a2a, pants: 0x2a2420, horse: 0x2a2420, barding: true, pauldrons: true, elite: true, glaive: true },
+  repeater: { kind: 'bow', hat: 'helmet', cloth: 0x3f6a3a, trim: 0x8b6b45, pants: 0x3a3a2a, pauldrons: true },
+  danyang: { kind: 'sword', hat: 'helmet', cloth: 0x2f4f7a, trim: 0x6f7780, pants: 0x2a3040, shield: true, pauldrons: true, elite: true },
+  strategist: { kind: 'fan', hat: 'scholar', cloth: 0xe8e0c8, trim: 0x2a2d32, pants: 0x4a4a4a, robe: true, hatColor: 0x2a2d32 },
+  phantom: { kind: 'sword', hat: 'helmet', cloth: 0xcfd6dc, trim: 0xe4e8ec, pants: 0xb8c0c8, shield: true },
+  // 武將（docs/02 §3.3 剪影與配色）
+  hero_liubei: { kind: 'sword', hat: 'crown', cloth: 0x3f7a46, trim: 0xd9b13b, pants: 0x2f4a32, horse: 0xd8d0c0, dual: true, cape: 0x2f6a3a, beard: 0x2b211c, beardStyle: 'long', hatColor: 0x2a2018, scale: 1.3 },
+  hero_guanyu: { kind: 'spear', hat: 'band', cloth: 0x2f6a3a, trim: 0xd9b13b, pants: 0x24402a, horse: 0xa8321f, face: 0xc8463a, beard: 0x1a1210, beardStyle: 'long', hatColor: 0x2f6a3a, glaive: true, cape: 0x2f6a3a, scale: 1.3 },
+  hero_zhangfei: { kind: 'spear', hat: 'helmet', cloth: 0x3a3a46, trim: 0x6f7780, pants: 0x2a2a30, face: 0x6a5240, beard: 0x111111, beardStyle: 'bushy', pauldrons: true, elite: true, scale: 1.3 },
+  hero_zhaoyun: { kind: 'spear', hat: 'helmet', cloth: 0xeeeef2, trim: 0xc8ccd2, pants: 0xb8bcc4, horse: 0xf2f0ea, pauldrons: true, elite: true, cape: 0xf4f4f8, scale: 1.3 },
+  hero_zhuge: { kind: 'fan', hat: 'scholar', cloth: 0xeeeae0, trim: 0x2a2d32, pants: 0x3a3a3a, robe: true, hatColor: 0x2a2d32, beard: 0x2b211c, beardStyle: 'long', scale: 1.3 },
+  hero_caocao: { kind: 'sword', hat: 'crown', cloth: 0x2a2d3a, trim: 0xd9b13b, pants: 0x1e2028, horse: 0x2a2420, cape: 0xa8322d, beard: 0x2b211c, beardStyle: 'long', hatColor: 0x1a1a1a, scale: 1.3 },
+  hero_xiahou: { kind: 'spear', hat: 'helmet', cloth: 0x3c4148, trim: 0x2a2d32, pants: 0x2a2a2a, pauldrons: true, elite: true, eyePatch: true, beard: 0x2b211c, beardStyle: 'bushy', scale: 1.3 },
+  hero_zhangliao: { kind: 'spear', hat: 'helmet', cloth: 0x5a5f66, trim: 0x2a2d32, pants: 0x3a3a3a, horse: 0x6a4a30, barding: true, glaive: true, elite: true, cape: 0x2a2d3a, scale: 1.3 },
+  hero_simayi: { kind: 'fan', hat: 'scholar', cloth: 0x3a3f5a, trim: 0xd9b13b, pants: 0x2a2a3a, robe: true, hatColor: 0x1a1a1a, beard: 0x2b211c, beardStyle: 'long', scale: 1.3 },
+  hero_sunquan: { kind: 'sword', hat: 'crown', cloth: 0x8a2f2a, trim: 0xd9b13b, pants: 0x4a2a24, horse: 0xa0703f, cape: 0xd9b13b, beard: 0x7a3a2a, beardStyle: 'long', hatColor: 0x2a2018, scale: 1.3 },
+  hero_zhouyu: { kind: 'bow', hat: 'band', cloth: 0xc0402f, trim: 0xf0e0c0, pants: 0x5a2a24, robe: true, hatColor: 0xf0e0c0, cape: 0xf0e0c0, scale: 1.3 },
+  hero_luxun: { kind: 'fan', hat: 'scholar', cloth: 0x4a6a8a, trim: 0xe8e0c8, pants: 0x2a3a4a, robe: true, hatColor: 0x2a3a4a, scale: 1.3 },
+  hero_ganning: { kind: 'sword', hat: 'band', cloth: 0x2f5a6a, trim: 0xd9b13b, pants: 0x24343a, dual: true, hatColor: 0xa8322d, beard: 0x2b211c, beardStyle: 'bushy', scale: 1.3 },
 };
-/** 攻城器械用另外的建模（siege.ts） */
-export const SIEGE_KINDS: Record<string, 'ram' | 'trebuchet'> = { ram: 'ram', trebuchet: 'trebuchet' };
+/** 攻城器械、車船用另外的建模（siege.ts） */
+export const SIEGE_KINDS: Record<string, 'ram' | 'trebuchet' | 'cart' | 'ship'> = {
+  ram: 'ram',
+  trebuchet: 'trebuchet',
+  ox_cart: 'cart',
+  fishing_boat: 'ship',
+  transport: 'ship',
+  galley: 'ship',
+  mengchong: 'ship',
+  louchuan: 'ship',
+  fire_ship: 'ship',
+};
 
 const SKIN = 0xf3c9a0;
 const HAIR = 0x2b211c;
@@ -145,6 +194,12 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
   // 身體：上衣、下擺、隊伍色腰帶
   add(cyl(0.13, 0.15, 0.24, 7, true), P.body, spec.cloth, 0, M(0, 0.33, 0));
   add(cyl(0.15, 0.175, 0.09, 7, true), P.body, spec.trim, 0, M(0, 0.225, 0));
+  if (spec.robe) {
+    // 長袍下擺蓋到腳踝
+    add(cyl(0.17, 0.21, 0.2, 8, true), P.body, spec.cloth, 0, M(0, 0.12, 0));
+    add(cyl(0.212, 0.212, 0.03, 8, true), P.body, spec.trim, 0, M(0, 0.03, 0));
+  }
+  if (spec.cape !== undefined) add(box(0.3, 0.36, 0.03), P.body, spec.cape, 0, M(0, 0.3, -0.16, 0.12));
   add(cyl(0.142, 0.142, 0.045, 7, true), P.body, 0xffffff, 1, M(0, 0.29, 0));
   if (spec.pauldrons) {
     add(box(0.1, 0.05, 0.13), P.body, 0xffffff, 1, M(0.15, 0.435, 0, 0, 0, -0.35));
@@ -159,7 +214,15 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
     add(box(0.02, 0.18, 0.14), P.body, 0xffffff, 1, M(-0.06, 0.76, -0.22));
   }
   // 頭：大頭、頭髮、眼睛
-  add(ico(0.165, 1), P.head, SKIN, 0, M(0, 0.6, 0));
+  add(ico(0.165, 1), P.head, spec.face ?? SKIN, 0, M(0, 0.6, 0));
+  if (spec.beard !== undefined) {
+    if (spec.beardStyle === 'bushy') add(ico(0.11, 0), P.head, spec.beard, 0, M(0, 0.49, 0.1, 0, 0, 0, 1.3, 0.8, 0.8));
+    else add(cone(0.075, 0.3, 5), P.head, spec.beard, 0, M(0, 0.4, 0.12, Math.PI + 0.25));
+  }
+  if (spec.eyePatch) {
+    add(box(0.06, 0.06, 0.02), P.head, DARK, 0, M(0.058, 0.6, 0.165));
+    add(box(0.34, 0.02, 0.33), P.head, DARK, 0, M(0, 0.63, 0, 0.15));
+  }
   add(new THREE.SphereGeometry(0.172, 7, 4, 0, Math.PI * 2, 0, Math.PI * 0.62), P.head, HAIR, 0, M(0, 0.62, -0.03, -0.35, 0, 0, 1, 0.95, 1));
   add(box(0.032, 0.05, 0.012), P.head, DARK, 0, M(0.058, 0.6, 0.158));
   add(box(0.032, 0.05, 0.012), P.head, DARK, 0, M(-0.058, 0.6, 0.158));
@@ -169,8 +232,21 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
     add(cone(0.04, 0.13, 5), P.head, spec.elite ? 0xe0b040 : 0xffffff, spec.elite ? 0 : 1, M(0, 0.86, -0.01));
   } else if (spec.hat === 'straw') {
     add(cone(0.3, 0.13, 9), P.head, 0xd9b96a, 0, M(0, 0.78, 0));
+  } else if (spec.hat === 'crown') {
+    // 冕冠：髮冠 ＋ 冕板 ＋ 垂旒
+    const hc = spec.hatColor ?? 0x2a2018;
+    add(cyl(0.07, 0.08, 0.12, 6), P.head, hc, 0, M(0, 0.8, -0.02));
+    add(box(0.3, 0.025, 0.2), P.head, hc, 0, M(0, 0.87, 0, 0.1));
+    add(box(0.26, 0.012, 0.02), P.head, 0xd9b13b, 0, M(0, 0.86, 0.1));
+    for (const x of [-0.1, -0.03, 0.03, 0.1]) add(box(0.012, 0.08, 0.012), P.head, 0xe8dcb8, 0, M(x, 0.81, 0.11));
+  } else if (spec.hat === 'scholar') {
+    // 綸巾
+    const hc = spec.hatColor ?? 0x2a2d32;
+    add(box(0.22, 0.16, 0.22), P.head, hc, 0, M(0, 0.79, -0.02, -0.1));
+    add(box(0.04, 0.22, 0.02), P.head, hc, 0, M(0.05, 0.66, -0.17, 0.2));
+    add(box(0.04, 0.22, 0.02), P.head, hc, 0, M(-0.05, 0.66, -0.17, 0.2));
   } else {
-    add(cyl(0.172, 0.172, 0.055, 8, true), P.head, 0xffffff, 1, M(0, 0.67, -0.01));
+    add(cyl(0.172, 0.172, 0.055, 8, true), P.head, spec.hatColor ?? 0xffffff, spec.hatColor !== undefined ? 0 : 1, M(0, 0.67, -0.01));
     add(ico(0.065, 0), P.head, HAIR, 0, M(0, 0.79, -0.05));
   }
   // 手臂與手
@@ -189,11 +265,26 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
     const dz = Math.sin(a);
     add(box(0.04, 0.36, 0.014), P.weapon, STEEL, 0, M(hx, hy + dy * 0.22, hz + dz * 0.22, a));
     add(box(0.11, 0.025, 0.035), P.weapon, 0x9a7a2a, 0, M(hx, hy + dy * 0.04, hz + dz * 0.04, a));
+    if (spec.dual) {
+      // 左手也拿一把
+      add(box(0.04, 0.32, 0.014), P.offhand, STEEL, 0, M(-hx, hy + dy * 0.2, hz + dz * 0.2, a));
+      add(box(0.1, 0.025, 0.035), P.offhand, 0x9a7a2a, 0, M(-hx, hy + dy * 0.04, hz + dz * 0.04, a));
+    }
   } else if (spec.kind === 'spear') {
     add(cyl(0.017, 0.017, 1.45, 5), P.weapon, WOOD, 0, M(hx, hy + 0.47, hz));
     add(cone(0.042, 0.17, 5), P.weapon, STEEL, 0, M(hx, hy + 1.28, hz));
     add(cone(0.055, 0.08, 6), P.weapon, 0xffffff, 1, M(hx, hy + 1.16, hz, Math.PI));
     if (spec.halberd) add(box(0.02, 0.2, 0.14), P.weapon, STEEL, 0, M(hx, hy + 1.22, hz + 0.08));
+    if (spec.glaive) {
+      // 偃月刀：大月牙刃 ＋ 紅纓
+      add(box(0.025, 0.36, 0.17), P.weapon, STEEL, 0, M(hx, hy + 1.2, hz + 0.09, 0.15));
+      add(cone(0.06, 0.1, 5), P.weapon, 0xc0302a, 0, M(hx, hy + 0.98, hz, Math.PI));
+    }
+  } else if (spec.kind === 'fan') {
+    // 羽扇
+    add(cyl(0.012, 0.012, 0.16, 4), P.weapon, WOOD, 0, M(hx, hy + 0.05, hz + 0.02));
+    const fan = new THREE.CircleGeometry(0.12, 7);
+    add(fan, P.weapon, 0xf8f6ee, 0, M(hx, hy + 0.2, hz + 0.03, 0, Math.PI / 2, 0, 1, 1.3, 1));
   } else if (spec.kind === 'tool') {
     add(cyl(0.016, 0.016, 0.62, 5), P.weapon, WOOD, 0, M(hx, hy + 0.2, hz));
     add(box(0.05, 0.04, 0.14), P.weapon, IRON, 0, M(hx, hy + 0.5, hz + 0.06));
@@ -264,7 +355,15 @@ export function buildSoldier(spec: SoldierSpec): ModelGeometry {
     [0.09, 0.32, -0.24],
     [-0.09, 0.32, -0.24],
   ];
-  return { ...b.build(), parent, pivot, rootPivot: mounted ? [0.15, 0, 0] : [0, 0, -0.12], mounted };
+  const out: ModelGeometry = { ...b.build(), parent, pivot, rootPivot: mounted ? [0.15, 0, 0] : [0, 0, -0.12], mounted };
+  // 武將放大
+  const sc = spec.scale ?? 1;
+  if (sc !== 1) {
+    for (let i = 0; i < out.position.length; i++) out.position[i] *= sc;
+    out.pivot = out.pivot.map(([x, y, z]) => [x * sc, y * sc, z * sc] as [number, number, number]);
+    out.rootPivot = [out.rootPivot[0] * sc, out.rootPivot[1] * sc, out.rootPivot[2] * sc];
+  }
+  return out;
 }
 
 // ───────── 動畫姿勢 ─────────
@@ -352,6 +451,12 @@ export function poseAt(kind: WeaponKind, anim: AnimName, t: number, mounted = fa
       r[P.legL][0] = -0.35;
       r[P.legR][0] = 0.3;
     }
+  } else if (anim === 'attack' && kind === 'fan') {
+    // 揮扇施法
+    r[P.armR][0] = track(t, [0, -0.3, 0.35, -1.7, 0.55, -1.2, 0.75, -1.7, 1, -0.3]);
+    r[P.armR][2] = track(t, [0, 0, 0.35, 0.3, 0.75, -0.2, 1, 0]);
+    r[P.body][0] = track(t, [0, 0, 0.35, -0.08, 1, 0]);
+    r[P.head][0] = -0.1;
   } else if (anim === 'attack' && kind === 'bow') {
     r[P.armL][0] = -1.5;
     r[P.offhand][0] = 1.5;

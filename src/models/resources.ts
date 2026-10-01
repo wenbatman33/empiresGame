@@ -57,6 +57,35 @@ function stump(): THREE.BufferGeometry {
   return b.build();
 }
 
+/** 魚群：水面漣漪 ＋ 躍出水面的魚 */
+function fish(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(new THREE.RingGeometry(0.25, 0.32, 10).rotateX(-Math.PI / 2), 0xcfe8f0, M(0, 0.02, 0));
+  b.add(new THREE.RingGeometry(0.45, 0.5, 12).rotateX(-Math.PI / 2), 0xb8dce8, M(0.05, 0.02, 0.05));
+  for (const [x, z, ry] of [[0.12, 0.05, 0.4], [-0.15, -0.1, 2.2], [0.02, -0.2, 4.0]]) {
+    b.add(new THREE.IcosahedronGeometry(0.09, 0), 0x7a9ab0, M(x, 0.06, z, 0, ry, 0, 1.6, 0.7, 0.8));
+    b.add(cone(0.05, 0.08, 3), 0x6a8aa0, M(x - Math.cos(ry) * 0.15, 0.06, z + Math.sin(ry) * 0.15, 0, ry, Math.PI / 2));
+  }
+  return b.build();
+}
+
+/** 兵書（捲軸）與傳國玉璽（方形玉印 ＋ 金色光圈） */
+export function scrollModel(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(cyl(0.09, 0.09, 0.4, 8), 0xe8dcb8, M(0, 0.12, 0, 0, 0, Math.PI / 2));
+  for (const x of [-0.22, 0.22]) b.add(cyl(0.05, 0.05, 0.06, 6), 0x7a4a2a, M(x, 0.12, 0, 0, 0, Math.PI / 2));
+  b.add(box(0.2, 0.01, 0.12), 0xa8322d, M(0, 0.21, 0.02));
+  return b.build();
+}
+
+export function sealModel(): THREE.BufferGeometry {
+  const b = new StaticBuilder();
+  b.add(box(0.26, 0.18, 0.26), 0x7fd0a0, M(0, 0.1, 0));
+  b.add(box(0.12, 0.1, 0.18), 0x6ab88a, M(0, 0.24, 0));
+  b.add(new THREE.RingGeometry(0.35, 0.42, 16).rotateX(-Math.PI / 2), 0xf0d060, M(0, 0.02, 0));
+  return b.build();
+}
+
 /** 民夫背上的資源（木頭、糧籃、金塊、石塊），用實例色區分 */
 export function carryBundle(): THREE.BufferGeometry {
   const b = new StaticBuilder();
@@ -71,5 +100,6 @@ export const RESOURCE_MODELS: Record<string, () => THREE.BufferGeometry> = {
   stone: () => rockPile(0xb3b0aa, 0x9a968f),
   deer,
   boar,
+  fish,
 };
 export const STUMP = stump;

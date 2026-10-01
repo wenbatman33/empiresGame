@@ -46,6 +46,9 @@ export class VisionSystem {
     }
   }
 
+  private readonly zhuge = UNIT_DEFS.findIndex((u) => u.id === 'hero_zhuge');
+  private readonly simayi = UNIT_DEFS.findIndex((u) => u.id === 'hero_simayi');
+
   step(): void {
     const sim = this.sim;
     if (sim.tick % 2 !== 0) return;
@@ -53,7 +56,11 @@ export class VisionSystem {
     const w = sim.world;
     for (let id = 0; id < w.high; id++) {
       if (!w.alive[id] || w.state[id] === S.Dead) continue;
-      this.mark(w.owner[id], w.x[id] >> FX_SHIFT, w.y[id] >> FX_SHIFT, UNIT_DEFS[w.utype[id]].sight);
+      if (w.aboard[id] >= 0) continue;
+      // 諸葛亮臥龍：視野 ＋4；司馬懿鷹視狼顧：半徑 12 永遠可見
+      const ut = w.utype[id];
+      const sight = ut === this.zhuge ? UNIT_DEFS[ut].sight + 4 : ut === this.simayi ? Math.max(12, UNIT_DEFS[ut].sight) : UNIT_DEFS[ut].sight;
+      this.mark(w.owner[id], w.x[id] >> FX_SHIFT, w.y[id] >> FX_SHIFT, sight);
     }
     const bs = sim.buildings;
     for (let b = 0; b < bs.high; b++) {
