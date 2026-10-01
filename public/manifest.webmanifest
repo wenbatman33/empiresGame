@@ -1,0 +1,16 @@
+{
+  "name": "三國霸業",
+  "short_name": "三國霸業",
+  "description": "Q 版三國即時戰略：採集、建造、升時代、武將技與計策。",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1d140d",
+  "theme_color": "#2a1f16",
+  "icons": [
+    { "src": "assets/ui/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "assets/ui/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

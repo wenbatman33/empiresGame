@@ -17,6 +17,7 @@ interface TypeMesh {
   mesh: THREE.InstancedMesh;
   anim: THREE.InstancedBufferAttribute;
   team: THREE.InstancedBufferAttribute;
+  flash: THREE.InstancedBufferAttribute;
 }
 
 export class UnitRenderer {
@@ -46,6 +47,9 @@ export class UnitRenderer {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       const anim = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PER_TYPE * 4), 4);
       const team = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PER_TYPE * 3), 3);
+      const flash = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PER_TYPE), 1);
+      flash.setUsage(THREE.DynamicDrawUsage);
+      baked.geometry.setAttribute('aFlash', flash);
       anim.setUsage(THREE.DynamicDrawUsage);
       team.setUsage(THREE.DynamicDrawUsage);
       baked.geometry.setAttribute('aAnim', anim);
@@ -55,7 +59,7 @@ export class UnitRenderer {
       mesh.castShadow = true;
       mesh.receiveShadow = false;
       this.group.add(mesh);
-      this.types.push({ baked, mesh, anim, team });
+      this.types.push({ baked, mesh, anim, team, flash });
     }
   }
 
@@ -158,6 +162,9 @@ export class UnitRenderer {
       a[n * 4 + 3] = row.loop ? row.dur : -row.dur;
       const col = this.teamRgb[w.owner[id] % this.teamRgb.length];
       const ta = tm.team.array as Float32Array;
+      // 受傷後 0.25 秒白閃
+      const since = sim.tick - 1 - w.hurtAt[id] + alpha;
+      (tm.flash.array as Float32Array)[n] = w.state[id] === S.Dead || since > 2.5 ? 0 : 0.65 * (1 - since / 2.5);
       ta[n * 3] = col.r;
       ta[n * 3 + 1] = col.g;
       ta[n * 3 + 2] = col.b;
@@ -173,6 +180,9 @@ export class UnitRenderer {
       tm.anim.clearUpdateRanges();
       tm.anim.addUpdateRange(0, n * 4);
       tm.anim.needsUpdate = true;
+      tm.flash.clearUpdateRanges();
+      tm.flash.addUpdateRange(0, n);
+      tm.flash.needsUpdate = true;
       tm.team.clearUpdateRanges();
       tm.team.addUpdateRange(0, n * 3);
       tm.team.needsUpdate = true;

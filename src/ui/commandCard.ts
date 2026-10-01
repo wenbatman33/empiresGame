@@ -2,6 +2,7 @@
 // PC 快捷鍵避開 WASD（鏡頭）、H（回城）、P（暫停）
 import { BUILDING_DEFS, BUILDING_INDEX, RES_NAMES, TECH_DEFS, UNIT_DEFS, type Cost, type TechDef } from '../sim/core/defs';
 import { SKILLS, STRATAGEMS } from '../sim/systems/abilities';
+import { ASSET, iconHtml, icons, unitIcon } from './icons';
 import type { Game } from '../game';
 
 export interface CardButton {
@@ -69,7 +70,6 @@ Object.assign(UNIT_ICONS, {
   phantom: '👻',
 });
 for (const u of UNIT_DEFS) if (u.hero) UNIT_ICONS[u.id] = '🌟';
-const STRATAGEM_ICONS: Record<string, string> = { fire: '🔥', decoy: '👻', fortify: '🧱', discord: '🗣️', plum: '🍑', empty_fort: '🏯', east_wind: '🌬️' };
 
 const TECH_ICONS: Record<string, string> = {
   age2: '📜', age3: '📜', age4: '📜', loom: '🧵', wheelbarrow: '🛞', handcart: '🛒', plow: '🌱', seeder: '🌾', waterwheel: '💧',
@@ -181,7 +181,7 @@ export class CommandCard {
           const locked = def.age > pl.age;
           out.push({
             id: `build:${id}`,
-            icon: BUILD_ICONS[id] ?? '🏠',
+            icon: icons.building(def.wonder ? `wonder_${pl.faction}` : id, Math.max(pl.age, def.age)),
             label: def.name,
             tip: locked ? `${def.name}：需要「${AGE_NAMES[def.age]}」時代` : `蓋${def.name}（${costText(pl.buildingCost(bt))}）`,
             cost: pl.buildingCost(bt),
@@ -235,7 +235,7 @@ export class CommandCard {
           const queued = bs.queue[b].filter((q) => q === ut).length;
           out.push({
             id: `train:${u.id}`,
-            icon: UNIT_ICONS[u.id] ?? '👤',
+            icon: unitIcon(u.id),
             label: u.name,
             tip: locked ? `${u.name}：需要「${AGE_NAMES[u.age]}」時代` : `訓練${u.name}（${costText(pl.unitCost(ut))}，${Math.round(pl.trainTicks(ut) / 10)} 秒）${block ? `\n⚠ ${block}` : ''}`,
             cost: pl.unitCost(ut),
@@ -267,7 +267,7 @@ export class CommandCard {
             const cd = Math.max(0, Math.ceil((ready - sim.tick) / 10));
             out.push({
               id: `strat:${key}`,
-              icon: STRATAGEM_ICONS[key] ?? '📜',
+              icon: ASSET(`icon/strat_${key}.png`),
               label: st.name,
               tip: `計策「${st.name}」：${st.desc}（${costText([0, 0, st.gold, st.stone])}，冷卻 ${st.cd} 秒）${block ? `\n⚠ ${block}` : ''}`,
               cost: [0, 0, st.gold, st.stone],
@@ -314,7 +314,7 @@ export class CommandCard {
       e.className = `card-btn${btn.enabled ? '' : ' off'}${btn.active ? ' on' : ''}${btn.danger ? ' danger' : ''}`;
       e.title = btn.tip + (pc && HOTKEYS[i] ? `（${HOTKEYS[i]}）` : '');
       const cost = btn.cost ? `<span class="cost">${costText(btn.cost)}</span>` : '';
-      e.innerHTML = `<span class="ico">${btn.icon}</span><span class="lbl">${btn.label}</span>${cost}${btn.badge ? `<span class="badge">${btn.badge}</span>` : ''}${pc && HOTKEYS[i] ? `<span class="hk">${HOTKEYS[i]}</span>` : ''}`;
+      e.innerHTML = `<span class="ico">${iconHtml(btn.icon)}</span><span class="lbl">${btn.label}</span>${cost}${btn.badge ? `<span class="badge">${btn.badge}</span>` : ''}${pc && HOTKEYS[i] ? `<span class="hk">${HOTKEYS[i]}</span>` : ''}`;
       e.addEventListener('click', (ev) => {
         ev.stopPropagation();
         if (btn.enabled) btn.action();

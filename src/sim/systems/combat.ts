@@ -529,6 +529,7 @@ export class CombatSystem {
       if (mul <= 0) return;
       if (mul !== 100) dmg = Math.max(1, Math.trunc((dmg * mul) / 100));
       w.hp[t] -= dmg;
+      w.hurtAt[t] = sim.tick;
       const src = from >= 0 && from < w.high && w.alive[from] && w.state[from] !== S.Dead;
       if (src) w.lastAttacker[t] = from;
       // 夏侯惇剛烈：反彈 15% 近戰傷害

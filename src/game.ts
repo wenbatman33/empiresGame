@@ -3,12 +3,14 @@ import * as THREE from 'three';
 import { AI_PARAMS, AIPlayer } from './ai/ai';
 import { sfx } from './audio/sfx';
 import { AUTO_KEY, SAVE_KEY, writeSave, type SaveData } from './save/save';
-import { showAgeBanner, showGameOver, showLoading, showPauseMenu, setupQuery, type GameSetup } from './ui/menus';
+import { showAgeBanner, showGameOver, showLoading, showPauseMenu, showSettings, setupQuery, type GameSetup } from './ui/menus';
 import { CAMERA, type Quality } from './config';
 import { Controls } from './input/controls';
 import { RtsCamera } from './input/camera';
 import { BuildingRenderer } from './render/buildings';
 import { Effects } from './render/effects';
+import { Particles } from './render/particles';
+import { Advisor } from './ui/advisor';
 import { SKILLS, STRATAGEMS } from './sim/systems/abilities';
 import { FogRenderer } from './render/fog';
 import { ProjectileRenderer } from './render/projectiles';
@@ -18,7 +20,7 @@ import { Stage } from './render/stage';
 import { Terrain } from './render/terrain';
 import { Trees } from './render/trees';
 import { UnitRenderer } from './render/units';
-import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, RK, TECH_DEFS, UNIT_DEFS, UNIT_INDEX, WONDER_NAMES } from './sim/core/defs';
+import { BUILDING_DEFS, RESOURCE_KINDS, RES_NAMES, RK, TAG, TECH_DEFS, UNIT_DEFS, UNIT_INDEX, WONDER_NAMES } from './sim/core/defs';
 import type { Command } from './sim/core/commands';
 import { ONE, TICK_MS } from './sim/core/fixed';
 import { S, TK } from './sim/core/world';
@@ -53,6 +55,8 @@ export class Game {
   readonly fog: FogRenderer;
   readonly projectilesR: ProjectileRenderer;
   readonly effects: Effects;
+  readonly particles: Particles;
+  readonly advisor: Advisor;
   readonly cam: RtsCamera;
   readonly hud: Hud;
   readonly controls: Controls;
@@ -127,12 +131,15 @@ export class Game {
     this.fog = new FogRenderer(this.sim.map.w, this.sim.map.h);
     this.projectilesR = new ProjectileRenderer(this.terrain);
     this.effects = new Effects(this.terrain);
-    this.stage.scene.add(this.terrain.group, this.trees.group, this.resourcesR.group, this.buildingsR.group, this.units.group, this.markers.group, this.projectilesR.mesh, this.effects.group);
+    this.particles = new Particles();
+    this.particles.density = { low: 0.4, medium: 0.7, high: 1 }[opts.quality] ?? 0.7;
+    this.stage.scene.add(this.terrain.group, this.trees.group, this.resourcesR.group, this.buildingsR.group, this.units.group, this.markers.group, this.projectilesR.mesh, this.effects.group, this.particles.group);
     this.applyShadowMode();
     const startDist = this.layoutMode === 'mobile' ? CAMERA.startDistMobile : CAMERA.startDistPc;
     this.cam = new RtsCamera(this.stage.camera, this.terrain, this.sim.map.w, this.sim.map.h, startDist);
     this.controls = new Controls(this, this.stage.renderer.domElement);
     this.hud = new Hud(container, this);
+    this.advisor = new Advisor(container, this);
     this.ais.push(new AIPlayer(this.sim, 1, st.ai));
     this.fog.enabled = !st.reveal;
     this.goHome();
@@ -143,7 +150,39 @@ export class Game {
     });
   }
 
+  /** 單位語音：依選取／指令的代表單位（武將 > 軍隊 > 民夫）挑台詞 */
+  private voiceFor(ids: number[], kind: 'sel' | 'cmd' | 'atk'): void {
+    const w = this.sim.world;
+    let hero = false;
+    let army = false;
+    let vil = false;
+    for (const id of ids) {
+      if (!w.alive[id] || w.owner[id] !== this.myPlayer) continue;
+      const d = UNIT_DEFS[w.utype[id]];
+      if (d.hero) hero = true;
+      else if (d.worker) vil = true;
+      else if (d.attack > 0) army = true;
+    }
+    if (hero) sfx.voice(kind === 'sel' ? 'sel_hero' : 'cmd_hero', kind === 'sel' ? 2 : 1);
+    else if (army) sfx.voice(`${kind}_soldier`, 3);
+    else if (vil) sfx.voice(kind === 'sel' ? 'sel_villager' : 'cmd_villager', 2);
+  }
+
+  private lastSelVoice = '';
+
   start(): void {
+    sfx.setMusic('peace');
+    sfx.preloadVoices(['sel_soldier_1', 'cmd_soldier_1', 'atk_soldier_1', 'sel_villager_1', 'cmd_villager_1']);
+    // 玩家下的指令：播語音回應（AI、重播不播）
+    const issue = this.sim.issue.bind(this.sim);
+    this.sim.issue = (input, delay) => {
+      const c = issue(input, delay);
+      if (!this.replaying && 'player' in c && c.player === this.myPlayer && 'ids' in c && Math.random() < 0.7) {
+        const kind = c.t === 'attack' || c.t === 'attackMove' ? 'atk' : c.t === 'move' || c.t === 'patrol' || c.t === 'gather' || c.t === 'work' || c.t === 'build' || c.t === 'buildLine' ? 'cmd' : null;
+        if (kind) this.voiceFor(c.ids, kind);
+      }
+      return c;
+    };
     this.last = performance.now();
     this.stage.renderer.setAnimationLoop((now) => this.frame(now));
   }
@@ -156,6 +195,7 @@ export class Game {
   setQuality(q: Quality): void {
     this.stage.applyQuality(q);
     this.applyShadowMode();
+    this.particles.density = { low: 0.4, medium: 0.7, high: 1 }[q] ?? 0.7;
   }
 
   /** 高畫質：兵種投射真陰影；中低畫質：兵種改用圓形假陰影（省一半頂點），樹木照常投影 */
@@ -221,6 +261,12 @@ export class Game {
     this.units.update(this.sim, alpha, this.time, dt * this.speed, this.viewBounds(), this.myPlayer, vis);
     const w = this.sim.world;
     for (const id of this.selected) if (!w.alive[id] || w.state[id] === S.Dead || !this.units.seen[id]) this.selected.delete(id);
+    const selKey = this.selected.size ? `${this.selected.size}:${[...this.selected][0]}` : '';
+    if (selKey !== this.lastSelVoice) {
+      if (selKey && !this.replaying) this.voiceFor([...this.selected], 'sel');
+      this.lastSelVoice = selKey;
+    }
+    this.updateMusic(dt);
     if (this.selBuilding >= 0 && !this.sim.buildings.alive[this.selBuilding]) this.selBuilding = -1;
     if (this.selResource >= 0 && !this.sim.res.alive[this.selResource]) this.selResource = -1;
     this.markers.update(this.units, this.selected, w, this.myPlayer, dt, {
@@ -233,17 +279,20 @@ export class Game {
     this.buildingsR.update(this.sim, this.selBuilding, this.myPlayer, exp);
     this.projectilesR.update(this.sim, alpha, vis);
     this.effects.update(this.sim, this.units, this.time, this.myPlayer, vis, exp);
+    this.ambientParticles(dt, ticks > 0);
+    this.particles.update(this.time);
     this.battleSounds();
     this.resourcesR.update(dt);
     if (this.placing) {
       const pl = this.placing;
-      this.buildingsR.setGhost(pl.btype, pl.tx, pl.ty, pl.valid, this.sim.players[this.myPlayer].age);
+      this.buildingsR.setGhost(pl.btype, pl.tx, pl.ty, pl.valid, this.sim.players[this.myPlayer].age, this.sim.players[this.myPlayer].faction);
       this.buildingsR.setLineGhost(pl.lineStart ? this.lineTiles(pl.lineStart[0], pl.lineStart[1], pl.tx, pl.ty).map(([x, y]) => [x, y, this.sim.canPlace(pl.btype, x, y)]) : []);
     } else {
       this.buildingsR.setGhost(-1, 0, 0, false);
       this.buildingsR.setLineGhost([]);
     }
     this.hud.update(dt);
+    this.advisor.update(dt * this.speed);
     this.stage.render();
     for (const f of this.onFrame) f(dt);
 
@@ -271,7 +320,11 @@ export class Game {
     const ev = this.sim.events;
     for (const e of ev) {
       if (e.t === 'died' && e.player === this.myPlayer) this.alert(this.sim.world.x[e.id] / ONE, this.sim.world.y[e.id] / ONE);
-      if (e.t === 'died' && this.units.seen[e.id]) sfx.play('die', 0.15);
+      if (e.t === 'died' && this.units.seen[e.id]) {
+        sfx.play('die', 0.15);
+        const naval = UNIT_DEFS[e.utype].naval;
+        this.particles.emit(naval ? 'splash' : 'dust', this.units.wx[e.id], this.units.wy[e.id], this.units.wz[e.id], this.time, naval ? 1.5 : 1);
+      }
       if (e.t === 'trained' && e.player === this.myPlayer && !this.replaying) sfx.play('train', 0.3);
       if (e.t === 'research' && !this.replaying) {
         const t = TECH_DEFS[e.tech];
@@ -291,6 +344,15 @@ export class Game {
       if (!this.replaying) this.featureEvent(e);
       if (e.t === 'bDestroyed') {
         if (this.selBuilding === e.id) this.selBuilding = -1;
+        // 建築崩塌：大片塵土 ＋ 碎屑
+        const cx = e.tx + e.w / 2;
+        const cz = e.ty + e.h / 2;
+        if (this.isExplored(Math.floor(cx), Math.floor(cz))) {
+          const y = this.terrain.heightAt(cx, cz);
+          this.particles.emit('bigDust', cx, y, cz, this.time, Math.max(1, e.w / 2));
+          this.particles.emit('debris', cx, y, cz, this.time, Math.max(1, e.w / 2));
+          sfx.play('collapse', 0.3);
+        }
         this.resourcesR.dirty();
       }
       if (e.t === 'resGone') {
@@ -310,6 +372,75 @@ export class Game {
     this.wasHoused = housed;
   }
 
+  private smokeTimer = 0;
+  private battleHold = 0;
+
+  /** 配樂：畫面上（或我方附近）有大規模交戰就切戰鼓，停戰 10 秒後回到平時 */
+  private updateMusic(dt: number): void {
+    const w = this.sim.world;
+    let fighting = 0;
+    for (let id = 0; id < w.high; id++) {
+      if (w.alive[id] && w.state[id] === S.Attack && (w.owner[id] === this.myPlayer || this.units.seen[id])) fighting++;
+      if (fighting >= 8) break;
+    }
+    if (fighting >= 8) this.battleHold = 10;
+    else this.battleHold = Math.max(0, this.battleHold - dt);
+    sfx.setMusic(this.over ? 'peace' : this.battleHold > 0 ? 'battle' : 'peace');
+  }
+
+  /** 持續性粒子：燃燒建築冒煙、火海煙與火星、受擊星星、騎兵揚塵 */
+  private ambientParticles(dt: number, newTick: boolean): void {
+    const sim = this.sim;
+    const now = this.time;
+    const w = sim.world;
+    if (newTick) {
+      const t = sim.tick - 1;
+      for (let id = 0; id < w.high; id++) {
+        if (!w.alive[id] || !this.units.seen[id]) continue;
+        // 受擊星星：近戰命中才冒（遠程太多會很吵）
+        if (w.hurtAt[id] === t && w.lastAttacker[id] >= 0 && UNIT_DEFS[w.utype[w.lastAttacker[id]]]?.rangeFx === 0 && ((id + t) & 1) === 0) this.particles.emit('star', this.units.wx[id], this.units.wy[id], this.units.wz[id], now);
+        // 騎兵、攻城器械移動揚塵
+        if (w.state[id] === S.Move && UNIT_DEFS[w.utype[id]].tags & (TAG.cavalry | TAG.siege) && (id * 7 + t) % 9 === 0) this.particles.emit('dust', this.units.wx[id], this.units.wy[id], this.units.wz[id], now, 0.6);
+      }
+    }
+    this.smokeTimer -= dt;
+    if (this.smokeTimer > 0) return;
+    this.smokeTimer = 0.18;
+    const bs = sim.buildings;
+    for (const [b] of sim.abilities.burning) {
+      if (!bs.alive[b]) continue;
+      const d = BUILDING_DEFS[bs.btype[b]];
+      const x = bs.tx[b] + d.w / 2;
+      const z = bs.ty[b] + d.h / 2;
+      if (!this.isExplored(Math.floor(x), Math.floor(z))) continue;
+      const y = this.terrain.heightAt(x, z) + this.buildingsR.heightOf(bs.btype[b]) * 0.8;
+      this.particles.emit('smoke', x, y, z, now, Math.min(2, d.w * 0.5));
+      this.particles.emit('ember', x, y, z, now);
+    }
+    // 受損嚴重的建築冒煙（HP < 40%）
+    for (let b = 0; b < bs.high; b++) {
+      if (!bs.alive[b] || !bs.complete[b]) continue;
+      const d = BUILDING_DEFS[bs.btype[b]];
+      if (bs.hp[b] * 10 >= d.hp * 4 || d.wall || (b + Math.floor(now * 5)) % 3) continue;
+      const x = bs.tx[b] + d.w / 2;
+      const z = bs.ty[b] + d.h / 2;
+      if (!this.isVisible(Math.floor(x), Math.floor(z))) continue;
+      this.particles.emit('smoke', x, this.terrain.heightAt(x, z) + this.buildingsR.heightOf(bs.btype[b]) * 0.7, z, now, 0.8);
+    }
+    for (const a of sim.abilities.areas) {
+      if (a.kind !== 'fire') continue;
+      const x = a.x / ONE;
+      const z = a.y / ONE;
+      if (!this.isVisible(Math.floor(x), Math.floor(z))) continue;
+      const r = a.r / ONE;
+      const ang = now * 7.3;
+      const px = x + Math.cos(ang) * r * 0.6;
+      const pz = z + Math.sin(ang) * r * 0.6;
+      this.particles.emit('smoke', px, this.terrain.heightAt(px, pz) + 0.8, pz, now, 1.2);
+      this.particles.emit('ember', px, this.terrain.heightAt(px, pz) + 0.4, pz, now);
+    }
+  }
+
   /** 三國特色事件：武將技演出、計策、倒戈、兵書玉璽、奇觀 */
   private featureEvent(e: (typeof this.sim.events)[number]): void {
     const sim = this.sim;
@@ -323,7 +454,7 @@ export class Game {
         const seen = e.player === me || this.isVisible(Math.floor(x), Math.floor(z));
         if (!seen) return;
         this.effects.burst(x, z, sk?.target === 'point' ? 5 : 7, e.player === me ? 0xf0c040 : 0xff5a4a, this.time, 1.2);
-        this.hud.cutIn(UNIT_DEFS[w.utype[e.id]].name, sk?.name ?? '', e.player === me);
+        this.hud.cutIn(UNIT_DEFS[w.utype[e.id]].name, sk?.name ?? '', e.player === me, e.skill);
         sfx.play('skill', 0.5);
         break;
       }
@@ -370,6 +501,7 @@ export class Game {
     if (this.time - this.lastAlert < 10) return;
     this.lastAlert = this.time;
     this.hud.toast('⚠ 我軍遭到攻擊！（空白鍵跳過去）', 2500);
+    this.advisor.say('attack');
     sfx.play('alert', 5);
     this.lastAlertPos = [x, z];
   }
@@ -431,12 +563,24 @@ export class Game {
       load: () => {
         location.href = `${location.pathname}?load=1${this.devQuery('&')}`;
       },
-      sound: () => this.hud.toast(sfx.toggle() ? '音效：開' : '音效：關'),
-      quality: () => {
-        const order: Quality[] = ['low', 'medium', 'high'];
-        const next = order[(order.indexOf(this.stage.quality) + 1) % 3];
-        this.setQuality(next);
-        this.hud.toast(`畫質：${{ low: '低', medium: '中', high: '高' }[next]}`);
+      settings: () => {
+        showSettings(
+          document.body,
+          { vol: sfx.vol, quality: this.stage.quality, advisor: this.advisor.enabled },
+          {
+            volume: (k, v) => sfx.setVolume(k, v),
+            quality: (q) => {
+              this.setQuality(q as Quality);
+              try {
+                localStorage.setItem('empiresGame.quality', q);
+              } catch {
+                /* 忽略 */
+              }
+            },
+            advisor: (on) => this.advisor.setEnabled(on),
+            close: () => {},
+          },
+        );
       },
       resign: () => {
         if (!window.confirm('確定要投降嗎？')) return;

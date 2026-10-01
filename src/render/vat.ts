@@ -119,9 +119,10 @@ export function makeVatMaterial(tex: THREE.DataTexture): THREE.MeshLambertMateri
     shader.uniforms.uVat = { value: tex };
     shader.uniforms.uTime = vatTime;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n${VAT_DECL}\nattribute vec3 aTeam;\nattribute float aMask;`)
+      .replace('#include <common>', `#include <common>\n${VAT_DECL}\nattribute vec3 aTeam;\nattribute float aMask;\nattribute float aFlash;`)
       .replace('#include <begin_vertex>', 'vec3 transformed = vatPosition();')
-      .replace('#include <color_vertex>', '#include <color_vertex>\n  vColor.rgb = mix(vColor.rgb, aTeam, aMask);');
+      // 隊伍色 ＋ 受擊白閃（docs/07 §8.1：不見血，受擊白閃）
+      .replace('#include <color_vertex>', '#include <color_vertex>\n  vColor.rgb = mix(vColor.rgb, aTeam, aMask);\n  vColor.rgb = mix(vColor.rgb, vec3(1.0, 0.96, 0.88), aFlash);');
   };
   mat.customProgramCacheKey = () => 'vat-lambert';
   return mat;

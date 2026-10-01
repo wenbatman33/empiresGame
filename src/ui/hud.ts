@@ -5,7 +5,8 @@ import { BUILDING_DEFS, FACTION_NAMES, RESOURCE_KINDS, RES_NAMES, TECH_DEFS, UNI
 import { SKILLS } from '../sim/systems/abilities';
 import { S, TASK } from '../sim/core/world';
 import type { Game } from '../game';
-import { BUILD_ICONS, CommandCard, UNIT_ICONS } from './commandCard';
+import { CommandCard } from './commandCard';
+import { ASSET, iconHtml, icons, unitIcon } from './icons';
 import { applyBox, HUD_KEYS, LAYOUTS, type HudKey } from './layout';
 
 const AGE_NAMES = ['', '黃巾亂世', '群雄割據', '三分天下', '天下一統'];
@@ -141,10 +142,12 @@ export class Hud {
   }
 
   /** 武將技演出：橫幅滑入「武將名 ── 技能名」 */
-  cutIn(hero: string, skill: string, mine: boolean): void {
+  cutIn(hero: string, skill: string, mine: boolean, heroId = ''): void {
     const el = document.createElement('div');
     el.className = `cutin${mine ? '' : ' enemy'}`;
-    el.innerHTML = `<span class="who">${hero}</span><span class="what">${skill}</span>`;
+    // 武將 AI 頭像（docs/07 §8.2 技能特寫）
+    const face = heroId ? `<img class="face" src="${ASSET(`hero/${heroId}.png`)}" alt="" onerror="this.remove()">` : '';
+    el.innerHTML = `${face}<span class="who">${hero}</span><span class="what">${skill}</span>`;
     this.root.appendChild(el);
     window.setTimeout(() => el.remove(), 1700);
   }
@@ -192,7 +195,7 @@ export class Hud {
     this.topText.innerHTML = [
       ...pl.res.map((v, i) => `<span>${RES_ICONS[i]}${compact ? '' : ` ${RES_NAMES[i]}`} ${v}</span>`),
       `<span${popCls}>👥 ${pl.pop}/${pl.popCap}</span>`,
-      `<span class="fac fac-${pl.faction}">${FACTION_NAMES[pl.faction] ?? ''}</span>`,
+      `<span class="fac fac-${pl.faction}"><img src="${ASSET(`faction/emblem_${pl.faction}.png`)}" alt="" onerror="this.remove()">${FACTION_NAMES[pl.faction] ?? ''}</span>`,
       `<span class="age">${AGE_NAMES[pl.age]}</span>`,
       `<span>⏱ ${time}</span>`,
       vic ? `<span class="warn">${vic}</span>` : '',
@@ -214,7 +217,7 @@ export class Hud {
       const def = BUILDING_DEFS[g.placing.btype];
       sig += `place${g.placing.btype}${g.placing.valid}`;
       if (sig === this.selSig) return;
-      html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div><b>放置${def.name}</b><div class="sub">${g.placing.valid ? (g.layoutMode === 'pc' ? '左鍵放置 · Shift 連續放 · 右鍵取消' : '點地面移動位置，再按「蓋這裡」') : '這裡不能蓋'}</div></div></div>`;
+      html = `<div class="sel-one"><span class="big">${iconHtml(icons.building(def.id, Math.max(def.age, g.sim.players[g.myPlayer].age)))}</span><div><b>放置${def.name}</b><div class="sub">${g.placing.valid ? (g.layoutMode === 'pc' ? '左鍵放置 · Shift 連續放 · 右鍵取消' : '點地面移動位置，再按「蓋這裡」') : '這裡不能蓋'}</div></div></div>`;
     } else if (g.targeting) {
       sig += `target${g.targeting.kind}`;
       if (sig === this.selSig) return;
@@ -254,12 +257,12 @@ export class Hud {
         }
         sig += `one${single}|${w.hp[single]}|${doing}|${extra}`;
         if (sig === this.selSig) return;
-        html = `<div class="sel-one"><span class="big">${UNIT_ICONS[def.id] ?? '👤'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b> <span class="sub">${doing}</span></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${w.hp[single]}/${maxHp}</span></div>${extra}</div></div>`;
+        html = `<div class="sel-one"><span class="big">${iconHtml(unitIcon(def.id))}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b> <span class="sub">${doing}</span></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${w.hp[single]}/${maxHp}</span></div>${extra}</div></div>`;
       } else {
         const list = [...counts].sort((a, b) => a[0] - b[0]);
         sig += `many${g.selected.size}|${list.join(',')}`;
         if (sig === this.selSig) return;
-        const chips = list.map(([t, n]) => `<button class="chip" data-type="${t}">${UNIT_ICONS[UNIT_DEFS[t].id] ?? ''}${UNIT_DEFS[t].name} ×${n}</button>`).join('');
+        const chips = list.map(([t, n]) => `<button class="chip" data-type="${t}">${iconHtml(unitIcon(UNIT_DEFS[t].id), 'sm')}${UNIT_DEFS[t].name} ×${n}</button>`).join('');
         html = `<div class="sel-many"><span class="dot" style="background:${color}"></span><b>${g.selected.size} 名</b>${chips}</div>`;
       }
     } else if (g.selBuilding >= 0 && bs.alive[g.selBuilding]) {
@@ -289,11 +292,13 @@ export class Hud {
       } else if (def.pop) extra = `<div class="sub">人口上限 ＋${def.pop}</div>`;
       const queue = q.length
         ? `<div class="queue">${q
-            .map((ut, i) => `<button class="qi" data-i="${i}" title="點一下取消">${UNIT_ICONS[UNIT_DEFS[ut].id] ?? '👤'}${i === 0 ? `<i style="width:${qp}%"></i>` : ''}</button>`)
+            .map((ut, i) => `<button class="qi" data-i="${i}" title="點一下取消">${iconHtml(unitIcon(UNIT_DEFS[ut].id), 'sm')}${i === 0 ? `<i style="width:${qp}%"></i>` : ''}</button>`)
             .join('')}${pl.housed && bs.owner[b] === g.myPlayer ? '<span class="warn">人口已滿</span>' : ''}</div>`
         : '';
       const research = rt >= 0 ? `<div class="research"><span>📘 研究「${TECH_DEFS[rt].name}」</span><span class="hp prog"><i style="width:${rp}%"></i></span><button class="qi cancel-r" title="取消研究（退費）">✕</button></div>` : '';
-      html = `<div class="sel-one"><span class="big">${BUILD_ICONS[def.id] ?? '🏠'}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${def.name}</b></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${bs.hp[b]}/${def.hp}</span></div>${extra}${research}${queue}</div></div>`;
+      const iconId = def.wonder ? `wonder_${sim.players[bs.owner[b]].faction}` : def.id;
+      const bname = def.wonder ? WONDER_NAMES[sim.players[bs.owner[b]].faction] ?? def.name : def.name;
+      html = `<div class="sel-one"><span class="big">${iconHtml(icons.building(iconId, sim.players[bs.owner[b]].age))}</span><div class="grow"><div><span class="dot" style="background:${color}"></span> <b>${bname}</b></div><div class="hpline"><span class="hp"><i style="width:${pct}%"></i></span><span>${bs.hp[b]}/${def.hp}</span></div>${extra}${research}${queue}</div></div>`;
     } else if (g.selResource >= 0 && rs.alive[g.selResource]) {
       const r = g.selResource;
       const kd = RESOURCE_KINDS[rs.kind[r]];

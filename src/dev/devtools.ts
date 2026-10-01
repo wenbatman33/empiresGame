@@ -191,9 +191,9 @@ export class DevTools {
     f.add(this.view, 'cutInHero', Object.fromEntries(UNIT_DEFS.filter((u) => u.hero).map((u) => [u.name, u.id]))).name('演出武將');
     f.add({ go: () => {
       const id = this.view.cutInHero;
-      g.hud.cutIn(UNIT_DEFS.find((u) => u.id === id)?.name ?? '', SKILLS[id]?.name ?? '', true);
+      g.hud.cutIn(UNIT_DEFS.find((u) => u.id === id)?.name ?? '', SKILLS[id]?.name ?? '', true, id);
     } }, 'go').name('🎬 預覽武將技橫幅');
-    f.add({ go: () => g.hud.cutIn('曹操', '挾天子以令諸侯', false) }, 'go').name('🎬 預覽敵方橫幅');
+    f.add({ go: () => g.hud.cutIn('曹操', '挾天子以令諸侯', false, 'hero_caocao') }, 'go').name('🎬 預覽敵方橫幅');
     f.add({ go: () => showAgeBanner(document.body, '三分天下', '解鎖工坊、衝車、重騎與兵種升級') }, 'go').name('📜 預覽升時代演出');
     for (const [reason, label] of [['conquest', '征服'], ['seal', '稱帝'], ['wonder', '奇觀'], ['resign', '投降']] as const) {
       f.add({ go: () => g.previewGameOver(true, reason) }, 'go').name(`🏆 預覽勝利（${label}）`);

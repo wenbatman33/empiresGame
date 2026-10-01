@@ -1,5 +1,6 @@
 // 主選單、開局設定、暫停選單、結算畫面、升時代演出（docs/01 §3、§9）
 import type { Difficulty } from '../ai/ai';
+import { ASSET } from './icons';
 
 export interface GameSetup {
   ai: Difficulty;
@@ -69,17 +70,18 @@ function el(html: string): HTMLElement {
 }
 
 /** 主選單 */
-export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStart: (s: GameSetup) => void; onLoad: () => void }): void {
+export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStart: (s: GameSetup) => void; onLoad: () => void; onSettings?: () => void }): void {
   const s: GameSetup = { ...DEFAULT_SETUP, seed: (Math.random() * 1e9) | 0 };
   const m = el(`
-    <div class="menu-screen">
+    <div class="menu-screen main-menu">
       <div class="menu-card">
-        <div class="menu-title">三國霸業</div>
+        <img class="menu-logo" src="${ASSET('ui/logo.png')}" alt="三國霸業" onerror="this.outerHTML='<div class=&quot;menu-title&quot;>三國霸業</div>'">
         <div class="menu-sub">Q 版三國即時戰略</div>
         <div class="menu-main">
           <button class="menu-btn primary" data-act="setup">⚔ 開始遊戲</button>
           ${opts.hasSave ? '<button class="menu-btn" data-act="load">📜 繼續上次</button>' : ''}
           <button class="menu-btn" data-act="help">❓ 操作說明</button>
+          <button class="menu-btn" data-act="settings">⚙ 設定</button>
         </div>
         <div class="menu-setup" hidden>
           <label>我的勢力<select data-k="faction"><option value="random" selected>隨機</option><option value="wei">魏（騎兵、屯田）</option><option value="shu">蜀（武將、高地）</option><option value="wu">吳（水軍、火攻）</option></select></label>
@@ -119,6 +121,10 @@ export function showMainMenu(root: HTMLElement, opts: { hasSave: boolean; onStar
     setup.hidden = act !== 'setup';
     help.hidden = act !== 'help';
     if (act === 'load') opts.onLoad();
+    if (act === 'settings') {
+      main.hidden = false;
+      opts.onSettings?.();
+    }
     if (act === 'go') {
       const get = (k: string) => (m.querySelector(`[data-k="${k}"]`) as HTMLInputElement | HTMLSelectElement).value;
       opts.onStart({
@@ -147,8 +153,7 @@ export function showPauseMenu(root: HTMLElement, acts: Record<string, () => void
         <button class="menu-btn primary" data-act="resume">▶ 繼續</button>
         <button class="menu-btn" data-act="save">💾 存檔</button>
         <button class="menu-btn" data-act="load">📜 讀檔</button>
-        <button class="menu-btn" data-act="sound">🔊 音效開關</button>
-        <button class="menu-btn" data-act="quality">🖥 切換畫質</button>
+        <button class="menu-btn" data-act="settings">⚙ 設定（音量、畫質、軍師）</button>
         <button class="menu-btn danger" data-act="resign">🏳 投降</button>
         <button class="menu-btn" data-act="menu">🏠 回主選單</button>
         ${extra}
@@ -210,4 +215,37 @@ export function showLoading(root: HTMLElement, text: string): { set: (t: string)
   root.appendChild(m);
   const sub = m.querySelector<HTMLElement>('.menu-sub')!;
   return { set: (t) => (sub.textContent = t), close: () => m.remove() };
+}
+
+/** 設定頁（docs/09 M5）：音量、畫質、軍師提示；改了立刻生效 */
+export function showSettings(
+  root: HTMLElement,
+  cur: { vol: { master: number; music: number; sfx: number; voice: number }; quality?: string; advisor?: boolean },
+  on: { volume: (k: 'master' | 'music' | 'sfx' | 'voice', v: number) => void; quality?: (q: string) => void; advisor?: (on: boolean) => void; close: () => void },
+): void {
+  const slider = (k: string, name: string, v: number) => `<label>${name}<input type="range" min="0" max="100" step="5" value="${Math.round(v * 100)}" data-vol="${k}"></label>`;
+  const m = el(`
+    <div class="menu-screen dim">
+      <div class="menu-card small settings">
+        <div class="menu-title sm">設定</div>
+        ${slider('master', '主音量', cur.vol.master)}
+        ${slider('music', '音樂', cur.vol.music)}
+        ${slider('sfx', '音效', cur.vol.sfx)}
+        ${slider('voice', '語音', cur.vol.voice)}
+        ${cur.quality ? `<label>畫質<select data-k="quality">${[['low', '低（省電）'], ['medium', '中'], ['high', '高']].map(([v, n]) => `<option value="${v}"${v === cur.quality ? ' selected' : ''}>${n}</option>`).join('')}</select></label>` : ''}
+        ${cur.advisor !== undefined ? `<label>軍師提示<select data-k="advisor"><option value="1"${cur.advisor ? ' selected' : ''}>開</option><option value="0"${cur.advisor ? '' : ' selected'}>關</option></select></label>` : ''}
+        <button class="menu-btn primary" data-act="close">完成</button>
+      </div>
+    </div>`);
+  root.appendChild(m);
+  m.querySelectorAll<HTMLInputElement>('[data-vol]').forEach((inp) => inp.addEventListener('input', () => on.volume(inp.dataset.vol as 'master', Number(inp.value) / 100)));
+  m.querySelector<HTMLSelectElement>('[data-k="quality"]')?.addEventListener('change', (e) => on.quality?.((e.target as HTMLSelectElement).value));
+  m.querySelector<HTMLSelectElement>('[data-k="advisor"]')?.addEventListener('change', (e) => on.advisor?.((e.target as HTMLSelectElement).value === '1'));
+  m.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (act === 'close' || e.target === m) {
+      m.remove();
+      on.close();
+    }
+  });
 }

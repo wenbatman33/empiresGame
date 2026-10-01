@@ -80,11 +80,13 @@ export class BuildingRenderer {
   }
 
   /** explored：該格探索過才畫敵方建築（迷霧） */
-  private typeMesh(bt: number, age: number): TypeMesh {
-    const a = Math.max(1, Math.min(4, age)) - 1;
+  private typeMesh(bt: number, age: number, faction = ''): TypeMesh {
+    // 奇觀依勢力換模型（魏銅雀台、蜀劍閣、吳黃鶴樓），借用時代欄位存放
+    const wonder = BUILDING_DEFS[bt].wonder;
+    const a = wonder ? Math.max(0, ['wei', 'shu', 'wu'].indexOf(faction)) : Math.max(1, Math.min(4, age)) - 1;
     let tm = this.types[bt][a];
     if (tm) return tm;
-    const geo = buildingModel(BUILDING_DEFS[bt].id, a + 1);
+    const geo = buildingModel(wonder ? `wonder_${['wei', 'shu', 'wu'][a]}` : BUILDING_DEFS[bt].id, wonder ? 4 : a + 1);
     const team = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 3), 3);
     team.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aTeam', team);
@@ -117,7 +119,7 @@ export class BuildingRenderer {
       const y = def.water ? Math.max(this.groundY(bs.tx[b], bs.ty[b], def.w, def.h), WATER_Y + 0.04) : this.groundY(bs.tx[b], bs.ty[b], def.w, def.h);
       const need = def.buildTicks * 3;
       const p = bs.complete[b] ? 1 : bs.progress[b] / need;
-      const tm = this.typeMesh(bt, sim.players[bs.owner[b]]?.age ?? 1);
+      const tm = this.typeMesh(bt, sim.players[bs.owner[b]]?.age ?? 1, sim.players[bs.owner[b]]?.faction);
       const n = counts.get(tm) ?? 0;
       counts.set(tm, n + 1);
       const sy = bs.complete[b] ? 1 : 0.08 + 0.92 * p;
@@ -160,7 +162,7 @@ export class BuildingRenderer {
   }
 
   /** 放置預覽；btype < 0 隱藏 */
-  setGhost(btype: number, tx: number, ty: number, valid: boolean, age = 1): void {
+  setGhost(btype: number, tx: number, ty: number, valid: boolean, age = 1, faction = 'wei'): void {
     if (btype < 0) {
       if (this.ghost) this.ghost.visible = false;
       this.ghostGrid.visible = false;
@@ -168,7 +170,8 @@ export class BuildingRenderer {
     }
     if (btype !== this.ghostType) {
       if (this.ghost) this.group.remove(this.ghost);
-      this.ghost = new THREE.Mesh(buildingModel(BUILDING_DEFS[btype].id, age), this.ghostMat);
+      const id = BUILDING_DEFS[btype].wonder ? `wonder_${faction}` : BUILDING_DEFS[btype].id;
+      this.ghost = new THREE.Mesh(buildingModel(id, age), this.ghostMat);
       this.ghost.renderOrder = 6;
       this.group.add(this.ghost);
       this.ghostType = btype;

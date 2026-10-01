@@ -77,6 +77,8 @@ export class World {
   readonly homeY = new Int32Array(CAPACITY);
   /** 最近一次出手的 tick（渲染對齊攻擊動畫） */
   readonly lastHit = new Int32Array(CAPACITY);
+  /** 最近一次受傷的 tick（渲染層用來做受擊白閃，不影響模擬） */
+  readonly hurtAt = new Int32Array(CAPACITY);
   readonly lastAttacker = new Int32Array(CAPACITY).fill(-1);
   readonly repath = new Uint16Array(CAPACITY);
 
@@ -162,6 +164,7 @@ export class World {
     this.destX[id] = this.homeX[id] = x;
     this.destY[id] = this.homeY[id] = y;
     this.lastHit[id] = -1000;
+    this.hurtAt[id] = -1000;
     this.lastAttacker[id] = -1;
     this.repath[id] = 0;
     this.skillReady[id] = tick + 100;

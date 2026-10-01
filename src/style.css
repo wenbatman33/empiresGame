@@ -41,7 +41,8 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at 50% 40%, #4a3524, #1d140d);
+  /* AI 生成的載入畫面（赤壁夜戰），載不到就用漸層 */
+  background: linear-gradient(rgba(10, 8, 20, 0.25), rgba(10, 8, 20, 0.55)), url('/assets/ui/loading_bg.jpg') center / cover no-repeat, radial-gradient(circle at 50% 40%, #4a3524, #1d140d);
   z-index: 100;
   transition: opacity 0.5s;
 }
@@ -53,6 +54,17 @@ body {
   text-align: center;
   font-size: 18px;
   color: var(--paper);
+}
+.ld-logo {
+  width: min(560px, 80vw);
+  max-height: 46vh;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.6));
+}
+.ld-tip {
+  margin-top: 6px;
+  font-size: 18px;
+  text-shadow: 0 2px 4px #000;
 }
 .ld-title {
   font-size: 44px;
@@ -235,6 +247,26 @@ body {
   background: linear-gradient(90deg, transparent, rgba(20, 20, 30, 0.88) 18%, rgba(20, 20, 30, 0.88) 82%, transparent);
   color: #ffb0a0;
 }
+.cutin .face {
+  width: 92px;
+  height: 92px;
+  margin: -34px 0 -34px;
+  align-self: center;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6));
+  transform: skewX(12deg);
+}
+#hud[data-layout='mobile'] .cutin .face {
+  width: 64px;
+  height: 64px;
+  margin: -22px 0;
+}
+.top-row .fac img {
+  width: 1.3em;
+  height: 1.3em;
+  vertical-align: -0.3em;
+  margin-right: 2px;
+}
 .cutin .who {
   font-size: 20px;
   opacity: 0.85;
@@ -395,6 +427,23 @@ body {
   font-size: 1.9em;
   line-height: 1;
 }
+/* 3D 算圖的兵種／建築圖示、AI 頭像 */
+.icon-img {
+  width: 1.25em;
+  height: 1.25em;
+  object-fit: contain;
+  vertical-align: middle;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+}
+.icon-img.sm {
+  width: 1.5em;
+  height: 1.5em;
+}
+.sel-one .big .icon-img {
+  width: 1.6em;
+  height: 1.6em;
+}
 .card-btn .lbl {
   font-size: 0.95em;
   font-weight: 700;
@@ -537,6 +586,21 @@ body {
 }
 .menu-screen.dim {
   background: rgba(15, 10, 6, 0.72);
+}
+/* 主選單：AI 生成的黃昏中原背景 */
+.menu-screen.main-menu {
+  background: linear-gradient(rgba(20, 12, 6, 0.15), rgba(20, 12, 6, 0.6)), url('/assets/ui/menu_bg.jpg') center / cover no-repeat, radial-gradient(circle at 50% 35%, #5a3d22 0%, #24170d 70%);
+}
+.main-menu .menu-card {
+  background: linear-gradient(rgba(58, 40, 24, 0.86), rgba(42, 29, 18, 0.9));
+  backdrop-filter: blur(3px);
+}
+.menu-logo {
+  width: 100%;
+  max-height: 34vh;
+  object-fit: contain;
+  margin: -18px 0 -10px;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
 }
 .menu-card {
   margin: auto;
@@ -752,4 +816,74 @@ body:has(#hud[data-layout='mobile']) #menu-btn {
   .menu-title {
     font-size: 34px;
   }
+}
+/* 開局設定、說明頁：Logo 縮小，留空間給表單 */
+.menu-card:has(.menu-setup:not([hidden])) .menu-logo,
+.menu-card:has(.menu-help:not([hidden])) .menu-logo {
+  max-height: 16vh;
+  margin: -8px 0 -6px;
+}
+
+/* ───────── M5：軍師提示、設定頁 ───────── */
+.advisor {
+  position: fixed;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, 92vw);
+  padding: 6px 16px 6px 6px;
+  border: 2px solid var(--gold);
+  border-radius: 14px;
+  background: linear-gradient(rgba(58, 40, 24, 0.94), rgba(36, 25, 15, 0.94));
+  color: var(--paper);
+  z-index: 40;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  animation: advisor-in 0.35s ease-out;
+  cursor: pointer;
+}
+.advisor img {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  flex: none;
+}
+.advisor b {
+  display: block;
+  color: var(--gold);
+  font-size: 13px;
+}
+.advisor span {
+  font-size: 15px;
+}
+@keyframes advisor-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+}
+.settings label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+.settings input[type='range'] {
+  width: 55%;
+  accent-color: var(--gold);
+}
+.settings select {
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--gold);
+  background: #1d140d;
+  color: var(--paper);
+}
+.advisor > div {
+  flex: 1;
+  min-width: 14em;
 }
