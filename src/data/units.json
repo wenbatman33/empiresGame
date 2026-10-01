@@ -1,0 +1,6 @@
+[
+  { "id": "villager", "name": "民夫", "hp": 25, "speed": 0.85, "radius": 0.26, "sight": 4 },
+  { "id": "swordsman", "name": "刀盾兵", "hp": 45, "speed": 0.9, "radius": 0.28, "sight": 4 },
+  { "id": "spearman", "name": "槍兵", "hp": 45, "speed": 1.0, "radius": 0.28, "sight": 4 },
+  { "id": "archer", "name": "弓兵", "hp": 30, "speed": 0.95, "radius": 0.26, "sight": 6 }
+]

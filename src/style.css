@@ -1,0 +1,285 @@
+:root {
+  --gold: #e8c46a;
+  --ink: #2a1f16;
+  --paper: #fff6e0;
+  font-family: 'LXGW WenKai TC', 'PingFang TC', 'Noto Sans TC', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #c9dcea;
+  color: var(--paper);
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+/* ───────── 載入畫面 ───────── */
+#loading {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 40%, #4a3524, #1d140d);
+  z-index: 100;
+  transition: opacity 0.5s;
+}
+#loading.done {
+  opacity: 0;
+  pointer-events: none;
+}
+.ld-card {
+  text-align: center;
+  font-size: 18px;
+  color: var(--paper);
+}
+.ld-title {
+  font-size: 44px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.2em;
+  margin-bottom: 8px;
+  text-shadow: 0 3px 0 #000;
+}
+
+/* ───────── HUD ───────── */
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.hud-panel {
+  position: absolute;
+  pointer-events: auto;
+  background: var(--hud-bg, rgba(42, 31, 22, 0.88));
+  border: 2px solid rgba(232, 196, 106, 0.55);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.hud-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.top-row {
+  display: flex;
+  gap: 1.1em;
+  align-items: center;
+  white-space: nowrap;
+}
+.top-row .age {
+  color: var(--gold);
+  font-weight: 700;
+}
+.top-row .paused {
+  color: #ff8a7a;
+  font-weight: 700;
+}
+.hud-minimap {
+  padding: 0;
+}
+.hud-minimap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+.hud-selection {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+}
+.sel-body {
+  width: 100%;
+}
+.sel-body .hint {
+  opacity: 0.75;
+  text-align: center;
+  font-size: 0.9em;
+}
+.sel-one,
+.sel-many {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  flex-wrap: wrap;
+}
+.dot {
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 50%;
+  display: inline-block;
+  border: 2px solid #fff;
+}
+.hp {
+  flex: 1;
+  height: 0.6em;
+  background: #4a1d1d;
+  border-radius: 99px;
+  overflow: hidden;
+  min-width: 80px;
+}
+.hp i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(#8fe36b, #4caf3a);
+}
+.chip {
+  font: inherit;
+  font-size: 0.9em;
+  color: var(--paper);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(232, 196, 106, 0.5);
+  border-radius: 99px;
+  padding: 0.15em 0.7em;
+  cursor: pointer;
+}
+.hud-leftbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.hud-btn {
+  flex: 1;
+  font: inherit;
+  font-weight: 700;
+  color: var(--paper);
+  background: var(--hud-bg, rgba(42, 31, 22, 0.88));
+  border: 2px solid rgba(232, 196, 106, 0.55);
+  border-radius: 10px;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 0;
+}
+.hud-btn:active,
+.hud-btn.on {
+  background: #8a5a2b;
+  border-color: var(--gold);
+}
+.sel-box {
+  position: fixed;
+  display: none;
+  border: 2px solid #9dff7a;
+  background: rgba(157, 255, 122, 0.12);
+  pointer-events: none;
+}
+.toast {
+  position: fixed;
+  left: 50%;
+  top: 64px;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  border-radius: 99px;
+  background: rgba(20, 14, 9, 0.85);
+  color: var(--paper);
+  font-size: 15px;
+  opacity: 0;
+  transition: opacity 0.25s;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.toast.show {
+  opacity: 1;
+}
+#hud[data-layout='mobile'] .toast {
+  top: 40px;
+  font-size: 13px;
+}
+
+/* 直向提示（只在觸控直向出現） */
+.rotate-hint {
+  display: none;
+}
+@media (orientation: portrait) and (pointer: coarse) {
+  .rotate-hint {
+    display: grid;
+    place-content: center;
+    gap: 12px;
+    text-align: center;
+    position: fixed;
+    inset: 0;
+    background: #1d140d;
+    color: var(--gold);
+    font-size: 22px;
+    pointer-events: auto;
+    z-index: 90;
+  }
+  .rotate-hint div:first-child {
+    font-size: 64px;
+  }
+}
+
+/* ───────── DEV ───────── */
+#dev-fps {
+  position: fixed;
+  right: 8px;
+  top: 6px;
+  font: 11px/1.3 ui-monospace, Menlo, monospace;
+  color: #b8ffb0;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 80;
+}
+#dev-gear {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  background: rgba(42, 31, 22, 0.85);
+  color: var(--gold);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 80;
+}
+.dev-gui {
+  z-index: 85 !important;
+  max-height: 85vh;
+}
+#hud.dev-drag .hud-panel {
+  outline: 2px dashed #00e5ff;
+  outline-offset: 2px;
+  cursor: move;
+}
+#hud.dev-drag .hud-panel::after {
+  content: attr(data-hud);
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font: 10px ui-monospace, monospace;
+  color: #00e5ff;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 0 3px;
+}
