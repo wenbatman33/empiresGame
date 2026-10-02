@@ -281,9 +281,9 @@ export class Hud {
       let extra = '';
       if (!bs.complete[b]) extra = `<div class="sub">建造中 ${prog}%</div>`;
       else if (def.id === 'farm') extra = `<div class="sub">剩餘 ${bs.food[b]} 糧${bs.farmer[b] >= 0 ? ' · 有人耕作' : ' · 沒人耕作'}</div>`;
-      else if (def.id === 'academy') {
+      else if (def.id === 'academy' || (def.id === 'town_hall' && sim.abilities.items.some((it) => it.academy === b))) {
         const items = sim.abilities.items.filter((it) => it.academy === b);
-        extra = `<div class="sub">${items.length ? `收藏：${items.map((it) => (it.kind === 'seal' ? '傳國玉璽' : '兵書')).join('、')}` : '謀士可把地圖上的兵書、玉璽送來這裡'}</div>`;
+        extra = `<div class="sub">${items.length ? `收藏：${items.map((it) => (it.kind === 'seal' ? '傳國玉璽' : '兵書')).join('、')}` : '任何部隊撿到地上的兵書、玉璽，帶回這裡就能產金'}</div>`;
       } else if (def.id === 'market') {
         extra = `<div class="sub">行情（每 100 單位）：糧 ${pl.price[0]} · 木 ${pl.price[1]} · 石 ${pl.price[3]} 金</div>`;
       } else if (def.wonder && sim.abilities.wonders.has(b)) {
@@ -530,6 +530,8 @@ function victoryTimer(sim: Game['sim']): string {
   if (sim.sealVictory) {
     for (const it of ab.items) {
       if (it.kind !== 'seal' || it.academy < 0 || !sim.buildings.alive[it.academy]) continue;
+      // 天下一統之前不倒數
+      if (sim.players[sim.buildings.owner[it.academy]].age < 4) continue;
       const left = 3000 - (sim.tick - it.since);
       if (left < best) {
         best = left;

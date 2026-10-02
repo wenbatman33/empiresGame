@@ -61,6 +61,10 @@ interface Burn {
 }
 
 const SEC = 10;
+/** 兵書、玉璽可以收進的建築 */
+const STORES = new Set(['town_hall', 'academy']);
+/** 單位碰到地上物品就自動撿起的距離 */
+const GRAB_R = (ONE * 9) / 10;
 const HERO_ZHOUYU = 1;
 const HERO_ZHANGLIAO = 2;
 const HERO_SUNQUAN = 4;
@@ -411,7 +415,7 @@ export class AbilitySystem {
     sim.events.push({ t: 'converted', id: t, from, to: w.owner[id] });
   }
 
-  /** 兵書、玉璽：跟著謀士走、放進書院產金、玉璽 300 秒稱帝 */
+  /** 兵書、玉璽：跟著撿起來的單位走、送回自家太守府或書院產金、玉璽 300 秒稱帝 */
   private tickItems(): void {
     const sim = this.sim;
     const w = sim.world;
@@ -425,9 +429,9 @@ export class AbilitySystem {
         }
         it.x = w.x[c];
         it.y = w.y[c];
-        // 走到自家書院旁就放進去
+        // 走到自家太守府或書院旁就收進去
         for (let b = 0; b < bs.high; b++) {
-          if (!bs.alive[b] || !bs.complete[b] || bs.owner[b] !== w.owner[c] || BUILDING_DEFS[bs.btype[b]].id !== 'academy') continue;
+          if (!bs.alive[b] || !bs.complete[b] || bs.owner[b] !== w.owner[c] || !STORES.has(BUILDING_DEFS[bs.btype[b]].id)) continue;
           if (this.gapToRect(w.x[c], w.y[c], b) <= ONE) {
             it.carrier = -1;
             it.academy = b;
@@ -446,9 +450,10 @@ export class AbilitySystem {
           return;
         }
         const pl = sim.players[bs.owner[b]];
-        // 兵書每秒 ＋0.5 金、玉璽 ＋1 金
-        if (it.kind === 'seal') pl.res[2] += 1;
-        else if (this.tick % 20 === 0) pl.res[2] += 1;
+        // 兵書每 4 秒 ＋1 金、玉璽每 2 秒 ＋1 金（任何部隊都能撿，開局就可能拿到，所以產量不能太高）
+        if (it.kind === 'seal' ? this.tick % 20 === 0 : this.tick % 40 === 0) pl.res[2] += 1;
+        // 稱帝：要到「天下一統」才開始倒數（玉璽開局就搶得到，太早倒數會變成誰先撿到誰贏）
+        if (it.kind === 'seal' && pl.age < 4) it.since = this.tick;
         if (it.kind === 'seal' && sim.sealVictory && this.tick - it.since >= 3000) sim.declareWinner(bs.owner[b], 'seal');
       }
     });
@@ -789,8 +794,9 @@ export class AbilitySystem {
       case 'pickup': {
         const it = this.items[c.item];
         if (!it || it.carrier >= 0 || it.academy >= 0) return;
+        // 任何陸上單位都能去撿（挑第一個還沒拿東西的）
         for (const id of sim.ownedIds(c.player, c.ids)) {
-          if (w.utype[id] !== UNIT_INDEX.strategist) continue;
+          if (UNIT_DEFS[w.utype[id]].naval || w.item[id] >= 0 || w.expireAt[id]) continue;
           sim.economy.clearTask(id);
           sim.moveUnit(id, it.x, it.y);
           this.pickups.set(id, c.item);
@@ -822,10 +828,21 @@ export class AbilitySystem {
     }
   }
 
-  /** 謀士撿物品：走到旁邊就拿起來 */
+  /** 被指派去撿物品的單位：走到旁邊就拿起來 */
   private pickups = new Map<number, number>();
 
-  /** 每 tick：謀士撿物品 */
+  private grab(id: number, k: number): void {
+    const w = this.sim.world;
+    const it = this.items[k];
+    it.carrier = id;
+    it.x = w.x[id];
+    it.y = w.y[id];
+    w.item[id] = k;
+    this.pickups.delete(id);
+    this.sim.events.push({ t: 'itemPicked', item: k, player: w.owner[id], id });
+  }
+
+  /** 每 tick：指派的撿拾、以及「任何陸上單位碰到就自動撿起」 */
   stepPickups(): void {
     const w = this.sim.world;
     for (const [id, k] of [...this.pickups]) {
@@ -837,15 +854,26 @@ export class AbilitySystem {
       const dx = w.x[id] - it.x;
       const dy = w.y[id] - it.y;
       if (dx * dx + dy * dy <= ONE * ONE) {
-        it.carrier = id;
-        w.item[id] = k;
-        this.pickups.delete(id);
+        this.grab(id, k);
         this.sim.stopMoving(id);
-        this.sim.events.push({ t: 'itemPicked', item: k, player: w.owner[id] });
       } else if (w.state[id] !== S.Move) {
         this.pickups.delete(id);
       }
     }
+    if (this.tick % 2 !== 0) return;
+    this.items.forEach((it, k) => {
+      if (it.carrier >= 0 || it.academy >= 0) return;
+      // id 小的優先（確定性）
+      for (let id = 0; id < w.high; id++) {
+        if (!w.alive[id] || w.state[id] === S.Dead || w.aboard[id] >= 0 || w.item[id] >= 0 || w.expireAt[id]) continue;
+        if (UNIT_DEFS[w.utype[id]].naval) continue;
+        const dx = w.x[id] - it.x;
+        const dy = w.y[id] - it.y;
+        if (dx * dx + dy * dy > GRAB_R * GRAB_R) continue;
+        this.grab(id, k);
+        return;
+      }
+    });
   }
 
   stratagemBlocker(player: number, kind: string): string {

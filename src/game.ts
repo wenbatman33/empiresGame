@@ -656,13 +656,14 @@ export class Game {
       case 'itemPicked': {
         const it = sim.abilities.items[e.item];
         const name = it.kind === 'seal' ? '傳國玉璽' : '兵書';
-        this.hud.toast(e.player === me ? `謀士拿到${name}了，送回書院！` : `⚠ 敵方謀士拿走了${name}`, 2500);
+        const who = UNIT_DEFS[sim.world.utype[e.id]]?.name ?? '';
+        this.hud.toast(e.player === me ? `${who}撿到${name}了！帶回太守府或書院就能每秒產金` : `⚠ 敵方撿走了${name}，追上去殺掉他就會掉下來`, 3500);
         break;
       }
       case 'itemStored': {
         const it = sim.abilities.items[e.item];
-        if (it.kind === 'seal') this.hud.toast(e.player === me ? '玉璽入庫！守住書院 5 分鐘即可稱帝' : '⚠ 敵方得到傳國玉璽！5 分鐘內必須摧毀其書院', 4000);
-        else if (e.player === me) this.hud.toast('兵書入庫：持續產出金');
+        if (it.kind === 'seal') this.hud.toast(e.player === me ? (sim.sealVictory ? '玉璽入庫：每秒 ＋0.5 金；升到「天下一統」後守住 5 分鐘即可稱帝' : '玉璽入庫：每秒 ＋0.5 金') : `⚠ 敵方得到傳國玉璽！${sim.sealVictory ? '對方升到天下一統後 5 分鐘就會稱帝，要搶回來或摧毀收藏它的建築' : ''}`, 5000);
+        else if (e.player === me) this.hud.toast('兵書入庫：每秒 ＋0.25 金');
         sfx.play(e.player === me ? 'done' : 'alert', 1);
         break;
       }
@@ -998,6 +999,18 @@ export class Game {
       this.selBuilding = b;
       return;
     }
+    const gp = this.cam.groundAt(sx, sy);
+    const it = gp ? this.pickItem(gp.x, gp.z) : -1;
+    if (it >= 0) {
+      const seal = this.sim.abilities.items[it].kind === 'seal';
+      this.hud.toast(
+        seal
+          ? `傳國玉璽：派任何部隊走過去就會撿起，帶回太守府或書院後每秒 ＋0.5 金${this.sim.sealVictory ? '；升到「天下一統」後守住 5 分鐘即可稱帝' : ''}`
+          : '兵書：派任何部隊走過去就會撿起，帶回太守府或書院後每秒 ＋0.25 金',
+        5000,
+      );
+      return;
+    }
     const r = this.pickResource(sx, sy);
     if (r >= 0) {
       this.clearAll();
@@ -1218,7 +1231,7 @@ export class Game {
       return;
     }
     const item = this.pickItem(p.x, p.z);
-    if (item >= 0 && ids.some((id) => sim.world.utype[id] === UNIT_INDEX.strategist)) {
+    if (item >= 0 && ids.some((id) => !UNIT_DEFS[sim.world.utype[id]].naval)) {
       sim.issue({ t: 'pickup', player: this.myPlayer, ids, item });
       this.markers.ping(p.x, p.y, p.z, 0xf0c040);
       return;

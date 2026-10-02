@@ -103,8 +103,52 @@ export class AIPlayer {
     this.research();
     this.command(th);
     this.navy(th);
+    this.treasure(th);
     this.heroes();
     this.stratagems();
+  }
+
+  private fetcher = -1;
+
+  /** 兵書、玉璽：派斥候（或一名士兵）去撿看得到的物品，撿到的單位送回太守府 */
+  private treasure(th: number): void {
+    const sim = this.sim;
+    const w = sim.world;
+    if (th < 0 || sim.tick % 50 >= this.params.thinkEvery) return;
+    const bs = sim.buildings;
+    // 帶著物品的我方單位：送回太守府
+    for (let id = 0; id < w.high; id++) {
+      if (!w.alive[id] || w.owner[id] !== this.player || w.state[id] === S.Dead || w.item[id] < 0) continue;
+      sim.issue({ t: 'move', player: this.player, ids: [id], x: bs.centerX(th), y: bs.centerY(th) });
+    }
+    if (this.fetcher >= 0 && (!w.alive[this.fetcher] || w.state[this.fetcher] === S.Dead || w.owner[this.fetcher] !== this.player || w.item[this.fetcher] >= 0)) this.fetcher = -1;
+    if (this.fetcher >= 0 && w.state[this.fetcher] === S.Move) return;
+    // 找最近、探索過的地上物品
+    const exp = sim.vision.explored[this.player];
+    const ground = sim.abilities.itemsOnGround();
+    let best = -1;
+    let bestD = Infinity;
+    for (const k of ground) {
+      const it = sim.abilities.items[k];
+      if (!this.params.cheat && !exp[(it.y >> FX_SHIFT) * sim.map.w + (it.x >> FX_SHIFT)]) continue;
+      const dx = it.x - bs.centerX(th);
+      const dy = it.y - bs.centerY(th);
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    if (best < 0) return;
+    if (this.fetcher < 0) {
+      for (let id = 0; id < w.high && this.fetcher < 0; id++) if (w.alive[id] && w.owner[id] === this.player && w.state[id] !== S.Dead && w.utype[id] === UNIT_INDEX.scout && w.item[id] < 0) this.fetcher = id;
+      if (this.fetcher < 0 && !this.attacking) {
+        const army = this.army().filter((id) => w.item[id] < 0 && !UNIT_DEFS[w.utype[id]].naval);
+        if (army.length >= 6) this.fetcher = army[0];
+      }
+    }
+    if (this.fetcher < 0) return;
+    sim.issue({ t: 'pickup', player: this.player, ids: [this.fetcher], item: best });
   }
 
   /** 水圖：蓋船塢、漁船捕魚 */
@@ -515,10 +559,24 @@ export class AIPlayer {
     return n ? [Math.trunc(sx / n), Math.trunc(sy / n)] : null;
   }
 
-  /** 進攻目標：看過（探索過）的敵方建築，太守府優先，其次最近的 */
+  /** 敵方收著玉璽、而且稱帝倒數已經開始的建築（-1 ＝ 沒有） */
+  private enemySealStore(): number {
+    const sim = this.sim;
+    if (!sim.sealVictory) return -1;
+    for (const it of sim.abilities.items) {
+      if (it.kind !== 'seal' || it.academy < 0) continue;
+      const b = it.academy;
+      if (sim.buildings.alive[b] && sim.buildings.owner[b] !== this.player && sim.players[sim.buildings.owner[b]].age >= 4) return b;
+    }
+    return -1;
+  }
+
+  /** 進攻目標：敵方收玉璽的建築最優先；其次看過的敵方建築，太守府優先，其次最近的 */
   private target(fromX: number, fromY: number): [number, number] | null {
     const sim = this.sim;
     const bs = sim.buildings;
+    const seal = this.enemySealStore();
+    if (seal >= 0) return [bs.centerX(seal), bs.centerY(seal)];
     const exp = sim.vision.explored[this.player];
     let best: [number, number] | null = null;
     let bestD = Infinity;
@@ -595,10 +653,11 @@ export class AIPlayer {
     const age = this.pl.age;
     const need = age >= 2 ? Math.max(6, this.params.armyMin[Math.min(2, age - 2)] + this.armyShift) : 999;
     if (!this.attacking) {
-      // 兵力要比看到的敵軍多三成才出擊（docs/05 §6），人口滿了也出擊
+      // 兵力要比看到的敵軍多三成才出擊（docs/05 §6），人口滿了也出擊；敵方玉璽稱帝倒數中就不管兵力，全軍出擊
       const enemySeen = this.seen[0] + this.seen[1] + this.seen[2] + this.seen[3];
       const strong = army.length >= (this.waves === 0 ? need : Math.max(need, Math.ceil(enemySeen * 1.3)));
-      if (t >= this.params.firstAttack + this.attackShift && this.waves < this.params.maxWaves && (strong || this.pl.pop >= this.pl.popCap - 2)) {
+      const urgent = this.enemySealStore() >= 0 && army.length >= 5;
+      if (urgent || (t >= this.params.firstAttack + this.attackShift && this.waves < this.params.maxWaves && (strong || this.pl.pop >= this.pl.popCap - 2))) {
         const tg = this.target(cx, cy);
         if (!tg) return;
         this.attacking = true;
@@ -643,7 +702,8 @@ export class AIPlayer {
       if (tg) sim.issue({ t: 'attackMove', player: this.player, ids: fresh, x: tg[0], y: tg[1] });
     }
     // 接近敵方太守府：衝車直接打太守府（不被民居分心）；其他兵照樣攻擊移動、遇敵就打
-    const eth = this.enemyTownHallNear(cx, cy, 16);
+    const sealB = this.enemySealStore();
+    const eth = sealB >= 0 ? sealB : this.enemyTownHallNear(cx, cy, 16);
     if (eth >= 0 && sim.tick % 50 < this.params.thinkEvery) {
       const hitters = army.filter((id) => w.order[id] !== ORDER.Attack && UNIT_DEFS[w.utype[id]].buildingsOnly);
       if (hitters.length) sim.issue({ t: 'attack', player: this.player, ids: hitters, kind: 2, target: eth });

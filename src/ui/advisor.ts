@@ -20,8 +20,8 @@ const HINTS: Record<string, Hint> = {
   attack: { id: 'adv_attack', text: '主公，我軍遭到攻擊！（空白鍵跳過去）', cd: 45 },
   age: { id: 'adv_age', text: '主公，資源已足，可以到太守府升時代了。', cd: 150 },
   army: { id: 'adv_army', text: '主公，敵軍將至，宜早建兵營練兵。', cd: 0 },
-  seal: { id: 'adv_seal', text: '主公，傳國玉璽就在地圖中央，派謀士取之、送回書院即可稱帝。', cd: 0 },
-  enemySeal: { id: 'adv_enemy_seal', text: '主公，敵方得了玉璽！務必攻破其書院。', cd: 0 },
+  seal: { id: 'adv_seal', text: '主公，傳國玉璽就在地圖中央，派人取來、送回太守府即可稱帝。', cd: 0 },
+  enemySeal: { id: 'adv_enemy_seal', text: '主公，敵方得了玉璽！務必攻破收藏它的建築。', cd: 0 },
   wonder: { id: 'adv_wonder', text: '主公，敵方正在建造奇觀！', cd: 0 },
 };
 
@@ -113,7 +113,7 @@ export class Advisor {
     for (const it of ab.items) {
       if (it.kind !== 'seal' || !sim.sealVictory) continue;
       if (it.academy >= 0 && sim.buildings.alive[it.academy] && sim.buildings.owner[it.academy] !== me) this.say('enemySeal');
-      else if (it.carrier < 0 && it.academy < 0 && pl.age >= 3) this.say('seal');
+      else if (it.carrier < 0 && it.academy < 0 && t > 240) this.say('seal');
     }
     const bs = sim.buildings;
     for (let b = 0; b < bs.high; b++) {

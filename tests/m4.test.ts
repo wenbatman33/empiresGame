@@ -179,6 +179,8 @@ describe('特殊勝利', () => {
     map.starts = [{ x: 6, y: 20 }, { x: 53, y: 20 }];
     map.itemSpots = [{ kind: 'seal', tx: 30, ty: 20 }];
     const sim = new Sim({ seed: 3, map, factions: ['shu', 'wu'] });
+    // 稱帝要到天下一統才倒數
+    for (let k = 0; k < 3; k++) sim.issue({ t: 'cheat', player: 0, kind: 'age' });
     sim.placeBuilding(BUILDING_INDEX.town_hall, 0, 4, 18, true);
     sim.placeBuilding(BUILDING_INDEX.town_hall, 1, 52, 18, true);
     spawn(sim, 1, 'villager', 54, 24);
@@ -193,6 +195,46 @@ describe('特殊勝利', () => {
     run(sim, 3010);
     expect(sim.winner).toBe(0);
     expect(sim.winReason).toBe('seal');
+  });
+});
+
+describe('兵書與玉璽：任何陸上單位碰到就撿', () => {
+  it('諸葛亮走過兵書就撿起，帶回太守府入庫、開始產金；拿著的人陣亡會掉在地上', () => {
+    const map = new MapGrid(60, 40);
+    map.starts = [{ x: 6, y: 20 }, { x: 53, y: 20 }];
+    map.itemSpots = [{ kind: 'scroll', tx: 20, ty: 20 }];
+    const sim = new Sim({ seed: 4, map, factions: ['shu', 'wu'] });
+    sim.placeBuilding(BUILDING_INDEX.town_hall, 0, 4, 18, true);
+    sim.placeBuilding(BUILDING_INDEX.town_hall, 1, 52, 18, true);
+    const [zg] = spawn(sim, 0, 'hero_zhuge', 14, 20);
+    // 只是移動經過（沒有下「撿」的指令）
+    sim.issue({ t: 'move', player: 0, ids: [zg], x: 26 * ONE, y: 20 * ONE + 512 });
+    run(sim, 150);
+    expect(sim.abilities.items[0].carrier).toBe(zg);
+    // 帶回太守府
+    sim.issue({ t: 'move', player: 0, ids: [zg], x: 9 * ONE, y: 20 * ONE });
+    run(sim, 250);
+    expect(sim.abilities.items[0].academy).toBeGreaterThanOrEqual(0);
+    const gold = sim.players[0].res[2];
+    run(sim, 200);
+    expect(sim.players[0].res[2]).toBeGreaterThan(gold);
+  });
+
+  it('拿著兵書的單位被殺，兵書掉在原地、敵人碰到就撿走', () => {
+    const map = new MapGrid(60, 40);
+    map.starts = [{ x: 6, y: 20 }, { x: 53, y: 20 }];
+    map.itemSpots = [{ kind: 'scroll', tx: 30, ty: 20 }];
+    const sim = new Sim({ seed: 4, map, factions: ['shu', 'wu'] });
+    const [sc] = spawn(sim, 0, 'scout', 30, 20);
+    run(sim, 4);
+    expect(sim.abilities.items[0].carrier).toBe(sc);
+    sim.combat.applyDamage(1, sc, 9999, -1);
+    run(sim, 12);
+    expect(sim.abilities.items[0].carrier).toBe(-1);
+    const [foe] = spawn(sim, 1, 'swordsman', 30, 21);
+    sim.issue({ t: 'move', player: 1, ids: [foe], x: (sim.abilities.items[0].x), y: sim.abilities.items[0].y });
+    run(sim, 60);
+    expect(sim.abilities.items[0].carrier).toBe(foe);
   });
 });
 

@@ -53,7 +53,7 @@ export type SimEvent =
   | { t: 'defeated'; player: number }
   | { t: 'gameOver'; winner: number; reason?: string }
   | { t: 'converted'; id: number; from: number; to: number }
-  | { t: 'itemPicked'; item: number; player: number }
+  | { t: 'itemPicked'; item: number; player: number; id: number }
   | { t: 'itemStored'; item: number; player: number }
   | { t: 'skill'; id: number; player: number; skill: string; x: number; y: number }
   | { t: 'stratagem'; player: number; kind: string; x: number; y: number }
